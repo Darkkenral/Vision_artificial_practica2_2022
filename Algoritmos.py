@@ -173,7 +173,6 @@ class Detector:
     def union_area(self, rectangle1, rectangle2):
         '''
         Calcula el área de la unión de dos rectángulos
-
         Parameters
         ----------
         rectangle1 : bunding box
@@ -186,6 +185,7 @@ class Detector:
         int
             Área de la unión
         '''
+        
         x1, y1, w1, h1 = rectangle1
         x3, y3, w2, h2 = rectangle2
         return (w1 * h1) + (w2 * h2) - self.intersection_area(rectangle1, rectangle2)
