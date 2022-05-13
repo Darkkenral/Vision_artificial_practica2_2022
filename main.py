@@ -13,12 +13,12 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    # Cargar los datos de entrenamiento 
+    # Cargar los datos de entrenamiento
     # args.train_path
 
-    #Tratamiento de los datos
+    # Tratamiento de los datos
 
-    # Crear el clasificador 
+    # Crear el clasificador
     if args.classifier == "BAYES":
         #detector = ...
         None
@@ -28,13 +28,8 @@ if __name__ == "__main__":
     # Entrenar el clasificador si es necesario ...
     # detector ...
 
-    # Cargar y procesar imgs de test 
+    # Cargar y procesar imgs de test
     # args.train_path ...
 
-    # Guardar los resultados en ficheros de texto (en el directorio donde se 
+    # Guardar los resultados en ficheros de texto (en el directorio donde se
     # ejecuta el main.py) tal y como se pide en el enunciado.
-
-
-
-
-

@@ -16,42 +16,30 @@ class SignalType(Enum):
     DIRECCION_PROHIBIDA = 4
     CEDA_EL_PASO = 5
     DIRECCION_OBLIGATORIA = 6
+    NO_SEÑAL = 0
 
 
-class Image:
-
-    def __init__(self, st: int, image):
-        self.signal_type = self.return_type(st)
-        self.image = image
-
-    def return_type(self, type: int):
-        '''
-        Devuelve el enum para un tipo de señal concreto
-        Parameters
-        ----------
-        type : int
-            numero clasificador de la señal
-        Returns
-        -------
-        Enum
-            Objeto enum que identifica a la señal
-        '''
-        if type in prohibicion:
-            return SignalType.PROHIBIDO
-        elif type in peligro:
-            return SignalType.PELIGRO
-        elif type in stop:
-            return SignalType.STOP
-        elif type in direccion_prohibida:
-            return SignalType.DIRECCION_PROHIBIDA
-        elif type in ceda_paso:
-            return SignalType.CEDA_EL_PASO
-        elif type in direccion_obligatoria:
-            return SignalType.DIRECCION_OBLIGATORIA
-
-    def display_img(self):
-        '''
-        Permite mostrar la imagen utilizando pyplot
-        '''
-        pyplot.imshow(self.image)
-        pyplot.show()
+def return_type(type: int):
+    '''
+    Devuelve el enum para un tipo de señal concreto
+    Parameters
+    ----------
+    type : int
+        numero clasificador de la señal
+    Returns
+    -------
+    Enum
+        Objeto enum que identifica a la señal
+    '''
+    if type in prohibicion:
+        return SignalType.PROHIBIDO
+    elif type in peligro:
+        return SignalType.PELIGRO
+    elif type in stop:
+        return SignalType.STOP
+    elif type in direccion_prohibida:
+        return SignalType.DIRECCION_PROHIBIDA
+    elif type in ceda_paso:
+        return SignalType.CEDA_EL_PASO
+    elif type in direccion_obligatoria:
+        return SignalType.DIRECCION_OBLIGATORIA

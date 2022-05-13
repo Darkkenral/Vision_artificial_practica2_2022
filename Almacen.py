@@ -1,29 +1,22 @@
-from ast import If
 import os
 import cv2
-from matplotlib import image, pyplot
-from Image import Image
+import numpy
+from Image import return_type
 from Image import SignalType
 from tqdm import tqdm
 from Algoritmos import *
-
-default_mask_dimension = (60, 60)
+from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
+default_mask_dimension = (32, 32)
 
 
 class Warehouse:
 
     def __init__(self):
-        self.train_images = {SignalType.PROHIBIDO: [], SignalType.PELIGRO: [], SignalType.STOP: [
-        ], SignalType.DIRECCION_PROHIBIDA: [], SignalType.CEDA_EL_PASO: [], SignalType.DIRECCION_OBLIGATORIA: []}
+        self.clasificadores_binarios = {SignalType.PROHIBIDO: [], SignalType.PELIGRO: [], SignalType.STOP: [
+        ], SignalType.DIRECCION_PROHIBIDA: [], SignalType.CEDA_EL_PASO: [], SignalType.DIRECCION_OBLIGATORIA: [], SignalType.NO_SEÑAL: []}
+        self.train_images = {}
+
         self.test_images = {}
-        self.mser_rectangles = {}
-        self.solution = {}
-        self.final_images = {}
-        #No es necesario, una vez generada la imagen total se puede crear la mascara de una vez
-        # No es necesario, una vez generada la imagen total se puede crear la mascara de una vez
-        self.average_images = {}
-        self.masks = {}
-        # Que hace el objeto detector en la clase de entrenamiento?
         self.detector = Detector()
 
     def line_to_img(self, line: str, path):
@@ -48,10 +41,13 @@ class Warehouse:
         miny = int(args[2])
         maxx = int(args[3])
         maxy = int(args[4])
-        cropped_img = master_image[miny:maxy, minx:maxx]
-        resized_img = cv2.resize(cropped_img, default_mask_dimension, interpolation = cv2.INTER_AREA)
-        img = Image(int(args[5]), resized_img)
-        return img
+        signal_type = return_type(args[5])
+        name = args[0]
+        rectangle = (minx, miny, maxx, maxy)
+        if signal_type in self.clasificadores_binarios:
+            self.clasificadores_binarios[signal_type].append(
+                master_image[miny:maxy, minx:maxx])
+        return name, rectangle
 
     def load_train_images(self, path):
         '''
@@ -73,10 +69,67 @@ class Warehouse:
         num_lines = sum(1 for line in open(gt_file, 'r'))
         with open(gt_file, 'r') as f:
             for i, line in enumerate(tqdm(f, total=num_lines)):
-                img = self.line_to_img(line, path)
-                if img.signal_type in self.train_images:
-                    self.train_images[img.signal_type].append(img)
-    
+                image_info = self.line_to_img(line, path)
+                if image_info[0] in self.train_images.keys():
+                    self.train_images[image_info[0]].append(image_info[1])
+                else:
+                    self.train_images[image_info[0]] = [image_info[1]]
+        self.generate_incorrect_data(path)
+
+    def generate_incorrect_data(self, path):
+        '''
+        Genera imagenes erroneas para el entrenamiento de los clasificadores binarios
+
+        Parameters
+        ----------
+        path : string
+            ruta en la que se encuentran las imagenes de entrenamiento
+        '''
+
+        incorrect_data = []
+        print('Generando imagenes de entrenamiento erroneas...')
+        for filename in tqdm(os.listdir(path)):
+            if filename.endswith(".jpg"):
+                img = cv2.imread(path+'/' + filename)
+                trash_regions = self.detector.detect_regions(img)
+                trash_regions = self.detector.filter_squares(
+                    trash_regions, 0.2)
+                if filename in self.train_images.keys():
+                    signal_regions = self.train_images[filename]
+                    for trash_region in trash_regions:
+                        for signal_region in signal_regions:
+                            if (self.detector.overlap_rectangle(trash_region, signal_region) < 0.5):
+                                incorrect_data.append(
+                                    img[trash_region[1]:trash_region[3], trash_region[0]:trash_region[2]])
+                else:
+                    for trash_region in trash_regions:
+                        incorrect_data.append(
+                            img[trash_region[1]:trash_region[3], trash_region[0]:trash_region[2]])
+            # if any of the dimensions of the regions stored in incorrect_data is 0 removeit
+        incorrect_data = [
+            x for x in incorrect_data if x.shape[0] != 0 and x.shape[1] != 0]
+        self.clasificadores_binarios[SignalType.NO_SEÑAL] = incorrect_data
+
+    def data_traetment(self):
+
+        print('Aplicando el algoritmo HOG a las imagenes de entrenamiento...')
+        for key in tqdm(self.clasificadores_binarios.keys()):
+            imagenes_señal = self.clasificadores_binarios[key]
+            feature_vector = np.array([])
+            for img in imagenes_señal:
+                np.append(
+                    feature_vector, self.detector.hog(img))
+            self.clasificadores_binarios[key] = feature_vector
+        print('Aplicando reduccion de dimensionalidad a las imagenes de entrenamiento con el algoritmo LDA...')
+        lda = LinearDiscriminantAnalysis(n_components=1)
+        feature_vectors = np.array([])
+        for key in tqdm(self.clasificadores_binarios.keys()):
+            feature_vectors = self.clasificadores_binarios[key]
+            for vector in feature_vectors:
+                vector = lda.fit(vector, [1, 2, 3, 4, 5, 6, 0])
+                print(vector)
+            self.clasificadores_binarios[key] = feature_vectors
+
     def load_test_images(self, path):
         '''
         Lee todas las imagenes del directorio test y las almacena en el diccionario test_images
@@ -88,32 +141,6 @@ class Warehouse:
                 # delete the extension of the image
                 name = filename.split('.')[0]
                 self.test_images[name] = img
-
-    
-    
-
-
-    def generate_average_images(self):
-        '''
-        Calcula la imagen media para cada una de las listas de señales almacenadas en el dicionario train_images
-        '''
-        print('Generando las imagenes medias...')
-        for signal_type in tqdm(SignalType, total=len(SignalType)):
-            self.average_images[signal_type] = self.detector.average_image(
-                self.train_images[signal_type])
-
-    def generate_color_masks(self):
-        '''
-        Genera una mascara de color para un rango de color especifico para cada una de las imagenes medias.
-        '''
-        print('Generando las mascara de las imagen media...')
-        for signal_type in tqdm(SignalType, total=len(SignalType)):
-            if signal_type != SignalType.DIRECCION_OBLIGATORIA:
-                self.masks[signal_type] = self.detector.color_mask(
-                    self.average_images[signal_type], red_min, red_max)
-            else:
-                self.masks[SignalType.DIRECCION_OBLIGATORIA] = self.detector.color_mask(
-                    self.average_images[SignalType.DIRECCION_OBLIGATORIA], blue_min, blue_max)
 
     def load_test_images(self, path):
         '''

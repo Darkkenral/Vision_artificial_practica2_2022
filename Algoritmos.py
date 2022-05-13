@@ -1,24 +1,11 @@
-from cgi import test
-import cmath
-from email.policy import default
-from platform import python_branch
-from re import X
-from typing import final
 from skimage.metrics import structural_similarity as ssim
-from cv2 import RANSAC, GaussianBlur, boundingRect, rectangle, resize
 import numpy as np
-from pytz import country_timezones
 from tqdm import tqdm
-from Image import Image
 import cv2
 from matplotlib import contour, image, pyplot
 
-default_mask_dimension = (25, 25)
+default_mask_dimension = (32, 32)
 
-red_min = (0, 70, 50)
-red_max = (10, 255, 255)
-blue_min = (100, 100, 100)
-blue_max = (255, 255, 150)
 
 delta = 2
 max_variation = 0.75
@@ -31,50 +18,6 @@ class Detector:
     def __init__(self):
         self.mser = cv2.MSER_create(
             delta=delta, min_area=min_area, max_area=max_area, max_variation=max_variation)
-
-    def average_image(self, image_list: list):
-        '''
-        Calcula la imagen media de una lista de imágenes
-
-        Parameters
-        ----------
-        image_list : list
-            Lista de imágenes
-
-        Returns
-        -------
-        Image
-            Imagen media
-        '''
-        avg_image = image_list[0].image
-        for i in range(len(image_list)):
-            if i == 0:
-                pass
-            else:
-                alpha = 1.0 / (i + 1)
-                beta = 1.0 - alpha
-                avg_image = cv2.addWeighted(image_list[i].image, alpha,
-                                            avg_image, beta, 0.0)
-        return avg_image
-
-
-    def crop_img(self, image, bbox):
-        '''
-        Extrae una zona de una imagen mas grande
-
-        Parameters
-        ----------
-        image : Imagen
-            Imagen a la que se le extraerá la zona
-        bbox : tuple
-            Coordenadas de la zona a extraer
-
-        Returns
-        -------
-        Imagen
-            Imagen con la zona extraida
-        '''
-        return image[bbox[1]:bbox[1]+bbox[3], bbox[0]:bbox[0]+bbox[2], :]
 
     def resize_img(self, image):
         '''
@@ -94,7 +37,7 @@ class Detector:
 
     # MSER functions
 
-    def filter_squares(self, rects: list, variation):
+    def filter_squares(self, rects, variation):
         '''
         Filtra una lista de rectángulos según una variación máxima
 
@@ -185,7 +128,7 @@ class Detector:
         int
             Área de la unión
         '''
-        
+
         x1, y1, w1, h1 = rectangle1
         x3, y3, w2, h2 = rectangle2
         return (w1 * h1) + (w2 * h2) - self.intersection_area(rectangle1, rectangle2)
@@ -229,6 +172,39 @@ class Detector:
             rect = (x, y, w, h)
         return rects
 
+    def enhance_blue_red(self, image):
+        '''
+        Aumenta el contraste de la imagen en el espacio de color BGR
+
+        Parameters
+        ----------
+        image : Imagen
+            Imagen a aumentar el contraste
+
+        Returns
+        -------
+        Imagen
+            Imagen con el contraste aumentado
+        '''
+        image_copy = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        gray = cv2.cvtColor(image_copy, cv2.COLOR_RGB2GRAY)
+        image_copy = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        gray = cv2.cvtColor(image_copy, cv2.COLOR_RGB2GRAY)
+        b, g, r = cv2.split(image_copy)
+        b_chanel = np.array(b, dtype=np.int16)
+        g_chanel = np.array(g, dtype=np.int16)
+        r_chanel = np.array(r, dtype=np.int16)
+        sum_chanels = b_chanel + g_chanel + r_chanel
+        sum_chanels[sum_chanels == 0] = 1
+        red_ratio = r_chanel / sum_chanels
+        blue_ratio = b_chanel / sum_chanels
+        red_ratio = red_ratio * 100.0
+        blue_ratio = blue_ratio * 100.0
+        bigest_ratios = np.array(np.maximum(
+            red_ratio, blue_ratio), dtype=np.int16)
+        bigest_ratios[bigest_ratios > 255] = 255
+        return bigest_ratios.astype(np.uint8)
+
     def detect_regions(self, image):
         '''
         Detecta las regiones de interes de una imagen aplicando el algoritmo MSER
@@ -243,55 +219,11 @@ class Detector:
         list
             Lista de regiones de interes
         '''
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        msers, bboxes = self.mser.detectRegions(gray)
-        bboxes = self.filter_squares(bboxes, 0.3)
-        bboxes = self.amplify_area(bboxes, 20, image.shape)
+        enchance_image = self.enhance_blue_red(image)
+        msers, bboxes = self.mser.detectRegions(enchance_image)
+        bboxes = self.filter_squares(bboxes, 0.25)
+        bboxes = self.amplify_area(bboxes, 25, image.shape)
         return bboxes
-
-    def mser_detector(self, test_images: dict, trained_masks: dict):
-        '''
-        Detecta las figuras geometricas en una imagen aplicando el algoritmo MSER
-
-        Parameters
-        ----------
-        test_images : dict
-            Diccionario con las imagenes de test
-        trained_masks : dict
-            Diccionario con las mascaras de entrenamiento
-
-        Returns
-        -------
-        dict
-            Diccionario con las imagenes de test con las figuras detectadas y su informacion
-        '''
-        image_processed = {}
-        print('Generando regiones del mser....')
-        for img in tqdm(test_images.keys()):
-            save_regions = []
-            boxes = self.detect_regions(test_images[img])
-            for box in boxes:
-                x, y, w, h = box
-                crop_img = test_images[img][y:y + h, x:x + w]
-                resize_img = self.resize_img(crop_img)
-                blue_mask = self.color_mask(resize_img, blue_min, blue_max)
-                red_mask = self.color_mask(resize_img, red_min, red_max)
-                information_red = self.find_best_match(
-                    red_mask, trained_masks)
-                information_blue = self.find_best_match(
-                    blue_mask, trained_masks)
-
-                if information_red[1] > information_blue[1]:
-                    information_final = information_red
-                else:
-                    information_final = information_blue
-                if information_final[1] > 0.48:
-                    save_regions.append((box, information_final))
-
-            save_regions = self.filter_overlapping_squares(save_regions, 0.5)
-            self.print_rectangles(save_regions, test_images[img])
-            image_processed[img] = (test_images[img], save_regions)
-        return image_processed
 
     def filter(self, save_regions, region, area):
         '''
@@ -346,3 +278,25 @@ class Detector:
                 image, (x, y), (x + w, y + h), (0, 255, 0), 2)
             image = cv2.putText(
                 image, info[0].name, (x, y), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+
+    def hog(self, image):
+
+        image = cv2.resize(image, (32, 32))
+        # Parametros HOG
+        winSize = (32, 32)
+        blockSize = (16, 16)
+        blockStride = (8, 8)
+        cellSize = (8, 8)
+        nbins = 9
+        derivAperture = 1
+        winSigma = 4.
+        histogramNormType = 0
+        L2HysThreshold = 2.0000000000000001e-01
+        gammaCorrection = 0
+        nlevels = 64
+        # HOG
+        hog = cv2.HOGDescriptor(winSize, blockSize, blockStride, cellSize, nbins, derivAperture,
+                                winSigma,   histogramNormType, L2HysThreshold, gammaCorrection, nlevels)
+        # Generando los vectores de caracteristicas
+        feature_vector = hog.compute(image)
+        return feature_vector
