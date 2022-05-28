@@ -1,3 +1,4 @@
+from cv2 import cvtColor
 from skimage.metrics import structural_similarity as ssim
 import numpy as np
 from tqdm import tqdm
@@ -223,6 +224,7 @@ class Detector:
             Lista de regiones de interes
         '''
         enchance_image = self.enhance_blue_red(image)
+        enchance_image = cvtColor(image, cv2.COLOR_BGR2GRAY)
         msers, bboxes = self.mser.detectRegions(enchance_image)
         bboxes = self.filter_squares(bboxes, 0.25)
         bboxes = self.amplify_area(bboxes, 20, image.shape)

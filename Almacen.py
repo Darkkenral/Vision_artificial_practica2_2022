@@ -1,4 +1,8 @@
+from cgi import test
+from distutils.config import PyPIRCCommand
+from imghdr import tests
 import os
+from bs4 import BeautifulStoneSoup
 import matplotlib.pyplot as pyplot
 import cv2
 import numpy as np
@@ -106,7 +110,6 @@ class Warehouse:
                     for trash_region in trash_regions:
                         incorrect_data.append(
                             img[trash_region[1]:trash_region[3], trash_region[0]:trash_region[2]])
-            # if any of the dimensions of the regions stored in incorrect_data is 0 removeit
         incorrect_data = [
             x for x in incorrect_data if x.shape[0] != 0 and x.shape[1] != 0]
         self.clasificadores_binarios[SignalType.NO_SEÑAL] = incorrect_data
@@ -116,17 +119,15 @@ class Warehouse:
         print('Aplicando el algoritmo HOG a las imagenes de entrenamiento...')
         for key in tqdm(self.clasificadores_binarios.keys()):
             imagenes_señal = self.clasificadores_binarios[key]
-            # get a numpy array of arrays 2d called feature_vector
             feature_vector = []
             for img in imagenes_señal:
                 hog_result = self.detector.hog(img)
-                # add hog result to the feature vector as a row
                 feature_vector = feature_vector + [hog_result]
-
             self.clasificadores_binarios[key] = feature_vector
 
         print('Aplicando reduccion de dimensionalidad a las imagenes de entrenamiento con el algoritmo LDA y generando Clasificadores binarios ...')
         no_signal_data = self.clasificadores_binarios[SignalType.NO_SEÑAL]
+        del self.clasificadores_binarios[SignalType.NO_SEÑAL]
         for key in tqdm(self.clasificadores_binarios.keys()):
             lda = LinearDiscriminantAnalysis()
             signal_data = self.clasificadores_binarios[key]
@@ -141,16 +142,35 @@ class Warehouse:
             self.clasificadores_binarios[key] = lda.fit(signal_data, labels)
 
     def multi_class_classifier(self):
-
+        tests_images_classified = {}
         print('Aplicando clasificador multiclase...')
         for image in tqdm(self.test_images.keys()):
             image_copy = self.test_images[image]
             regions = self.detector.detect_regions(image_copy)
-            regions_cropped = []
+            classified_regions = []
             for region in regions:
                 x, y, w, h = region
                 cropped_image = image_copy[y:y+h, x:x+w]
-                # show the cropped image
+                if cropped_image.shape[0] != 0 and cropped_image.shape[1] != 0:
+                    cropped_image = cv2.resize(cropped_image, (32, 32))
+                    hog_result = self.detector.hog(cropped_image)
+                    best_match = None
+                    best_match_value = 0
+                    for key in self.clasificadores_binarios.keys():
+                        probability = self.clasificadores_binarios[key].predict_proba(
+                            [hog_result])
+                        probability = probability[0][1]
+                        if probability > 0.5:
+                            if probability > best_match_value:
+                                best_match = key
+                                best_match_value = probability
+                    if best_match is not None:
+                        classified_regions.append(
+                            (region, best_match_value, best_match))
+
+            tests_images_classified[image] = classified_regions
+
+        return tests_images_classified
 
     def load_test_images(self, path):
         '''
