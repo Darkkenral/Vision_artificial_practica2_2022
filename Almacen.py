@@ -1,6 +1,7 @@
 import os
+import matplotlib.pyplot as pyplot
 import cv2
-import numpy
+import numpy as np
 from Image import return_type
 from Image import SignalType
 from tqdm import tqdm
@@ -14,8 +15,7 @@ class Warehouse:
     def __init__(self):
         self.clasificadores_binarios = {SignalType.PROHIBIDO: [], SignalType.PELIGRO: [], SignalType.STOP: [
         ], SignalType.DIRECCION_PROHIBIDA: [], SignalType.CEDA_EL_PASO: [], SignalType.DIRECCION_OBLIGATORIA: [], SignalType.NO_SEÑAL: []}
-        self.train_images = {}
-
+        self.train_images_info = {}
         self.test_images = {}
         self.detector = Detector()
 
@@ -41,17 +41,19 @@ class Warehouse:
         miny = int(args[2])
         maxx = int(args[3])
         maxy = int(args[4])
-        signal_type = return_type(args[5])
+        type = int(args[5])
+        signal_type = return_type(type)
         name = args[0]
         rectangle = (minx, miny, maxx, maxy)
-        if signal_type in self.clasificadores_binarios:
+        if signal_type in self.clasificadores_binarios.keys():
+            # add the image section to the list of images of the classifier
             self.clasificadores_binarios[signal_type].append(
                 master_image[miny:maxy, minx:maxx])
         return name, rectangle
 
     def load_train_images(self, path):
         '''
-        Lee el archvio gt.txt, extrae de cada imagen las regiones de interes,clasifica cada señal de cada region y  las almacena en el diccionario train_images
+        Lee el archvio gt.txt, extrae de cada imagen las regiones de interes,clasifica cada señal de cada region y  las almacena en el diccionario train_images_info
         Parameters
         ----------
         path : string
@@ -70,10 +72,10 @@ class Warehouse:
         with open(gt_file, 'r') as f:
             for i, line in enumerate(tqdm(f, total=num_lines)):
                 image_info = self.line_to_img(line, path)
-                if image_info[0] in self.train_images.keys():
-                    self.train_images[image_info[0]].append(image_info[1])
+                if image_info[0] in self.train_images_info.keys():
+                    self.train_images_info[image_info[0]].append(image_info[1])
                 else:
-                    self.train_images[image_info[0]] = [image_info[1]]
+                    self.train_images_info[image_info[0]] = [image_info[1]]
         self.generate_incorrect_data(path)
 
     def generate_incorrect_data(self, path):
@@ -92,10 +94,9 @@ class Warehouse:
             if filename.endswith(".jpg"):
                 img = cv2.imread(path+'/' + filename)
                 trash_regions = self.detector.detect_regions(img)
-                trash_regions = self.detector.filter_squares(
-                    trash_regions, 0.2)
-                if filename in self.train_images.keys():
-                    signal_regions = self.train_images[filename]
+
+                if filename in self.train_images_info.keys():
+                    signal_regions = self.train_images_info[filename]
                     for trash_region in trash_regions:
                         for signal_region in signal_regions:
                             if (self.detector.overlap_rectangle(trash_region, signal_region) < 0.5):
@@ -110,25 +111,46 @@ class Warehouse:
             x for x in incorrect_data if x.shape[0] != 0 and x.shape[1] != 0]
         self.clasificadores_binarios[SignalType.NO_SEÑAL] = incorrect_data
 
-    def data_traetment(self):
+    def data_treatment(self):
 
         print('Aplicando el algoritmo HOG a las imagenes de entrenamiento...')
         for key in tqdm(self.clasificadores_binarios.keys()):
             imagenes_señal = self.clasificadores_binarios[key]
-            feature_vector = np.array([])
+            # get a numpy array of arrays 2d called feature_vector
+            feature_vector = []
             for img in imagenes_señal:
-                np.append(
-                    feature_vector, self.detector.hog(img))
+                hog_result = self.detector.hog(img)
+                # add hog result to the feature vector as a row
+                feature_vector = feature_vector + [hog_result]
+
             self.clasificadores_binarios[key] = feature_vector
-        print('Aplicando reduccion de dimensionalidad a las imagenes de entrenamiento con el algoritmo LDA...')
-        lda = LinearDiscriminantAnalysis(n_components=1)
-        feature_vectors = np.array([])
+
+        print('Aplicando reduccion de dimensionalidad a las imagenes de entrenamiento con el algoritmo LDA y generando Clasificadores binarios ...')
+        no_signal_data = self.clasificadores_binarios[SignalType.NO_SEÑAL]
         for key in tqdm(self.clasificadores_binarios.keys()):
-            feature_vectors = self.clasificadores_binarios[key]
-            for vector in feature_vectors:
-                vector = lda.fit(vector, [1, 2, 3, 4, 5, 6, 0])
-                print(vector)
-            self.clasificadores_binarios[key] = feature_vectors
+            lda = LinearDiscriminantAnalysis()
+            signal_data = self.clasificadores_binarios[key]
+            signal_data = signal_data+no_signal_data
+            signal_data = np.array(signal_data, dtype=np.float32)
+            aux = np.zeros(len(no_signal_data), dtype=np.int16)
+            labels = np.ones(
+                len(self.clasificadores_binarios[key]), dtype=np.int16)
+            labels = labels*key.value
+            labels = np.append(labels, aux)
+            labels = labels.astype(np.float32)
+            self.clasificadores_binarios[key] = lda.fit(signal_data, labels)
+
+    def multi_class_classifier(self):
+
+        print('Aplicando clasificador multiclase...')
+        for image in tqdm(self.test_images.keys()):
+            image_copy = self.test_images[image]
+            regions = self.detector.detect_regions(image_copy)
+            regions_cropped = []
+            for region in regions:
+                x, y, w, h = region
+                cropped_image = image_copy[y:y+h, x:x+w]
+                # show the cropped image
 
     def load_test_images(self, path):
         '''

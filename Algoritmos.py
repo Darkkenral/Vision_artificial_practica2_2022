@@ -133,45 +133,6 @@ class Detector:
         x3, y3, w2, h2 = rectangle2
         return (w1 * h1) + (w2 * h2) - self.intersection_area(rectangle1, rectangle2)
 
-    def amplify_area(self, rects, factor, shape):
-        '''
-        Amplía el área de un rectángulo
-
-        Parameters
-        ----------
-        rects : list
-            Lista de rectángulos
-        factor : int
-            Factor de ampliación
-        shape : tuple
-            Tamaño de la imagen
-
-        Returns
-        -------
-        list
-            Lista de rectángulos ampliados
-        '''
-
-        for rect in rects:
-            x, y, w, h = rect
-            if x > factor:
-                x = x - factor
-            else:
-                x = 0
-            if y > factor:
-                y = y - factor
-            else:
-                y = 0
-            if w < shape[1] - factor:
-                w = w + factor
-            else:
-                w = shape[1]
-            if h < shape[0] - factor:
-                h = h + factor
-
-            rect = (x, y, w, h)
-        return rects
-
     def enhance_blue_red(self, image):
         '''
         Aumenta el contraste de la imagen en el espacio de color BGR
@@ -205,6 +166,48 @@ class Detector:
         bigest_ratios[bigest_ratios > 255] = 255
         return bigest_ratios.astype(np.uint8)
 
+    def amplify_area(self, rects, factor, shape):
+        '''
+        Amplía el área de un rectángulo
+
+        Parameters
+        ----------
+        rects : list
+            Lista de rectángulos
+        factor : int
+            Factor de ampliación
+        shape : tuple
+            Tamaño de la imagen
+
+        Returns
+        -------
+        list
+            Lista de rectángulos ampliados
+        '''
+        return_list = []
+        for rect in rects:
+            x, y, w, h = rect
+            if x > factor:
+                x = x - int(factor/2)
+            else:
+                x = 1
+            if y > factor:
+                y = y - int(factor/2)
+            else:
+                y = 1
+            if w < shape[1] - factor:
+                w = w + factor
+            else:
+                w = shape[1]
+            if h < shape[0] - factor:
+                h = h + factor
+            else:
+                h = shape[0]
+
+            return_list.append((x, y, w, h))
+
+        return return_list
+
     def detect_regions(self, image):
         '''
         Detecta las regiones de interes de una imagen aplicando el algoritmo MSER
@@ -222,7 +225,7 @@ class Detector:
         enchance_image = self.enhance_blue_red(image)
         msers, bboxes = self.mser.detectRegions(enchance_image)
         bboxes = self.filter_squares(bboxes, 0.25)
-        bboxes = self.amplify_area(bboxes, 25, image.shape)
+        bboxes = self.amplify_area(bboxes, 20, image.shape)
         return bboxes
 
     def filter(self, save_regions, region, area):
@@ -299,4 +302,6 @@ class Detector:
                                 winSigma,   histogramNormType, L2HysThreshold, gammaCorrection, nlevels)
         # Generando los vectores de caracteristicas
         feature_vector = hog.compute(image)
+        # print the dtype of the feature vector
+        feature_vector = list(feature_vector)
         return feature_vector
