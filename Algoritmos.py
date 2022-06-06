@@ -1,4 +1,6 @@
-from cv2 import cvtColor
+from distutils.log import info
+from typing import final
+from cv2 import cvtColor, mean
 from skimage.metrics import structural_similarity as ssim
 import numpy as np
 from tqdm import tqdm
@@ -76,8 +78,15 @@ class Detector:
         float
             Porcentaje de intersección
         '''
+        if rectangle1[0] > rectangle2[0] and rectangle1[1] > rectangle2[1] and rectangle1[0] + rectangle1[2] < rectangle2[0] + rectangle2[2] and rectangle1[1] + rectangle1[3] < rectangle2[1] + rectangle2[3]:
+            return 1.0
+        if rectangle2[0] > rectangle1[0] and rectangle2[1] > rectangle1[1] and rectangle2[0] + rectangle2[2] < rectangle1[0] + rectangle1[2] and rectangle2[1] + rectangle2[3] < rectangle1[1] + rectangle1[3]:
+            return 1.0
+
         i = self.intersection_area(rectangle1, rectangle2)
         u = self.union_area(rectangle1, rectangle2)
+        if u == 0:
+            return 0.0
         return i / u
 
     def intersection_area(self, rectangle1, rectangle2):
@@ -96,23 +105,11 @@ class Detector:
         int
             Área de intersección
         '''
-        x1, y1, w1, h1 = rectangle1
-        x3, y3, w2, h2 = rectangle2
-        x2 = x1 + w1
-        y2 = y1 + h1
-        x4 = x3 + w2
-        y4 = y3 + h2
-
-        x5 = max(x1, x3)
-        y5 = max(y1, y3)
-
-        x6 = min(x2, x4)
-        y6 = min(y2, y4)
-
-        if x5 > x6 or y5 > y6:
-            return 0
-        else:
-            return (x6-x5) * (y6-y5)
+        # compute the intersection area
+        intersection_area = (
+            min(rectangle1[0] + rectangle1[2], rectangle2[0] + rectangle2[2]) - max(rectangle1[0], rectangle2[0])) * (
+                min(rectangle1[1] + rectangle1[3], rectangle2[1] + rectangle2[3]) - max(rectangle1[1], rectangle2[1]))
+        return intersection_area
 
     def union_area(self, rectangle1, rectangle2):
         '''
@@ -129,10 +126,10 @@ class Detector:
         int
             Área de la unión
         '''
-
-        x1, y1, w1, h1 = rectangle1
-        x3, y3, w2, h2 = rectangle2
-        return (w1 * h1) + (w2 * h2) - self.intersection_area(rectangle1, rectangle2)
+        # compute the union area
+        union_area = (
+            rectangle1[2] * rectangle1[3] + rectangle2[2] * rectangle2[3] - self.intersection_area(rectangle1, rectangle2))
+        return union_area
 
     def enhance_blue_red(self, image):
         '''
@@ -224,65 +221,86 @@ class Detector:
             Lista de regiones de interes
         '''
         enchance_image = self.enhance_blue_red(image)
-        enchance_image = cvtColor(image, cv2.COLOR_BGR2GRAY)
         msers, bboxes = self.mser.detectRegions(enchance_image)
         bboxes = self.filter_squares(bboxes, 0.25)
         bboxes = self.amplify_area(bboxes, 20, image.shape)
+        # turn into set and then into list to remove duplicates
+        bboxes = list(set(bboxes))
         return bboxes
+    # make a method that given a lis of bboxes of the form (x,y,w,h), and a threshold
+    # check that the squares of the bboxes dont overlap too much with each other
 
-    def filter(self, save_regions, region, area):
+    def filter_overlapping_squares(self, bboxes, threshold):
         '''
-        Filtra una lista de rectángulos según una área mínima
+        Filtra los rectángulos de una lista de rectángulos
 
         Parameters
         ----------
-        rects : list
+        bboxes : list
             Lista de rectángulos
-        rect :  tuple
-            Rectángulo
-        area :  int
-            Área mínima
+        threshold : float
+            Umbral de intersección
 
         Returns
         -------
         list
-            Lista de rectángulos filtrada
+            Lista de rectángulos filtrados
         '''
-        for r in save_regions:
-            if region is not r:
-                o = self.overlap_rectangle(region[0], r[0])
-                if o > area and region[1][1] > r[1][1]:
-                    return False
-        return True
+        return_list = []
+        bboxes = sorted(bboxes, key=lambda x: x[2]*x[3], reverse=True)
+        for i in range(len(bboxes)):
+            condition = True
+            for j in range(i + 1, len(bboxes)):
+                if self.overlap_rectangle(bboxes[i], bboxes[j]) > threshold:
+                    condition = False
+                    break
+            if condition:
+                return_list.append(bboxes[i])
+        return return_list
 
-    def filter_overlapping_squares(self, save_regions, area_percent_overlapped):
+    def equal_region(self, region1, region2):
         '''
-        Filtra una lista de rectángulos según una área mínima
+        Compara dos regiones de interes
 
         Parameters
         ----------
-        rects : list
+        region1 : bunding box
+            Primera region de interes
+        region2 : bunding box
+            Segunda region de interes
+        '''
+        x1, y1, w1, h1 = region1
+        x2, y2, w2, h2 = region2
+        return (x1 == x2) and (y1 == y2) and (w1 == w2) and (h1 == h2)
+
+    def get_biggest(self, regions):
+        '''
+        Obtiene el rectángulo con mayor área de una lista de rectángulos
+
+        Parameters
+        ----------
+        regions : list
             Lista de rectángulos
-        area_percent_overlapped : float
-            Porcentaje de área que debe tener un rectángulo para que no se elimine
 
         Returns
         -------
-        list
-            Lista de rectángulos filtrada
+        bunding box
+            Rectángulo con mayor área
         '''
+        biggest_region = regions[0]
+        for region in regions:
+            if region[2] * region[3] > biggest_region[2] * biggest_region[3]:
+                biggest_region = region
+        return biggest_region
 
-        save_regions = [region for region in save_regions if self.filter(
-            save_regions, region, area_percent_overlapped)]
-        return save_regions
-
-    def print_rectangles(self, save_regions, image):
+    def print_rectangles(self, image, save_regions):
         for region, info in save_regions:
             x, y, w, h = region
             image = cv2.rectangle(
                 image, (x, y), (x + w, y + h), (0, 255, 0), 2)
             image = cv2.putText(
                 image, info[0].name, (x, y), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+        return image
 
     def hog(self, image):
 

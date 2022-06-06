@@ -1,8 +1,10 @@
 from cgi import test
 from distutils.config import PyPIRCCommand
+from doctest import master
 from imghdr import tests
 import os
 from bs4 import BeautifulStoneSoup
+from cv2 import CAP_PROP_IMAGES_BASE
 import matplotlib.pyplot as pyplot
 import cv2
 import numpy as np
@@ -50,9 +52,9 @@ class Warehouse:
         name = args[0]
         rectangle = (minx, miny, maxx, maxy)
         if signal_type in self.clasificadores_binarios.keys():
-            # add the image section to the list of images of the classifier
+            crop_image = master_image[miny:maxy, minx:maxx]
             self.clasificadores_binarios[signal_type].append(
-                master_image[miny:maxy, minx:maxx])
+                crop_image)
         return name, rectangle
 
     def load_train_images(self, path):
@@ -98,7 +100,6 @@ class Warehouse:
             if filename.endswith(".jpg"):
                 img = cv2.imread(path+'/' + filename)
                 trash_regions = self.detector.detect_regions(img)
-
                 if filename in self.train_images_info.keys():
                     signal_regions = self.train_images_info[filename]
                     for trash_region in trash_regions:
@@ -147,6 +148,7 @@ class Warehouse:
         for image in tqdm(self.test_images.keys()):
             image_copy = self.test_images[image]
             regions = self.detector.detect_regions(image_copy)
+            regions = self.detector.filter_overlapping_squares(regions, 0.5)
             classified_regions = []
             for region in regions:
                 x, y, w, h = region
@@ -160,15 +162,16 @@ class Warehouse:
                         probability = self.clasificadores_binarios[key].predict_proba(
                             [hog_result])
                         probability = probability[0][1]
-                        if probability > 0.5:
-                            if probability > best_match_value:
-                                best_match = key
-                                best_match_value = probability
-                    if best_match is not None:
+                        if probability > best_match_value:
+                            best_match = key
+                            best_match_value = probability
+                    if (best_match is not None) and (best_match_value > 0.8):
                         classified_regions.append(
-                            (region, best_match_value, best_match))
-
-            tests_images_classified[image] = classified_regions
+                            (region, (best_match, best_match_value)))
+            printed_image = self.detector.print_rectangles(
+                image_copy, classified_regions)
+            tests_images_classified[image] = (
+                printed_image, classified_regions)
 
         return tests_images_classified
 
@@ -201,11 +204,11 @@ class Warehouse:
         Guarda las imagenes procesadas en el directorio resultado_imgs
         '''
         print('Guardando imagenes procesadas...')
-        # create the folder if it does not exist
-        if not os.path.exists('resultado_imgs'):
-            os.makedirs('resultado_imgs')
+        # create the folder if it does not exist in the same directory as the script
+        if not os.path.exists('./resultado_imgs'):
+            os.makedirs('./resultado_imgs')
         for name, img_data in tqdm(processed_images.items()):
-            cv2.imwrite(f'resultado_imgs/{name}.jpg', img_data[0])
+            cv2.imwrite(f'./resultado_imgs/{name}.jpg', img_data[0])
 
         print('Guardando informacion de las imagenes procesadas...')
         # create a resultado.txt empty to save the information if it does not exist, if it does exist, it will be overwritten
