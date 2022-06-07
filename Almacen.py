@@ -3,6 +3,7 @@ from distutils.config import PyPIRCCommand
 from doctest import master
 from imghdr import tests
 import os
+from socket import AF_UNIX
 from bs4 import BeautifulStoneSoup
 from cv2 import CAP_PROP_IMAGES_BASE
 import matplotlib.pyplot as pyplot
@@ -104,7 +105,7 @@ class Warehouse:
                     signal_regions = self.train_images_info[filename]
                     for trash_region in trash_regions:
                         for signal_region in signal_regions:
-                            if (self.detector.overlap_rectangle(trash_region, signal_region) < 0.5):
+                            if (self.detector.overlap_rectangle(trash_region, signal_region) < 0.3):
                                 incorrect_data.append(
                                     img[trash_region[1]:trash_region[3], trash_region[0]:trash_region[2]])
                 else:
@@ -162,10 +163,11 @@ class Warehouse:
                         probability = self.clasificadores_binarios[key].predict_proba(
                             [hog_result])
                         probability = probability[0][1]
+                        print(probability)
                         if probability > best_match_value:
                             best_match = key
                             best_match_value = probability
-                    if (best_match is not None) and (best_match_value > 0.8):
+                    if (best_match is not None) and (best_match_value > 0.95):
                         classified_regions.append(
                             (region, (best_match, best_match_value)))
             printed_image = self.detector.print_rectangles(
