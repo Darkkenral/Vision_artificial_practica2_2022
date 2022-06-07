@@ -1,12 +1,5 @@
-from cgi import test
-from distutils.config import PyPIRCCommand
-from doctest import master
-from imghdr import tests
+
 import os
-from socket import AF_UNIX
-from bs4 import BeautifulStoneSoup
-from cv2 import CAP_PROP_IMAGES_BASE
-import matplotlib.pyplot as pyplot
 import cv2
 import numpy as np
 from Image import return_type
