@@ -1,7 +1,3 @@
-from distutils.log import info
-from typing import final
-from cv2 import cvtColor, mean
-from skimage.metrics import structural_similarity as ssim
 import numpy as np
 from tqdm import tqdm
 import cv2
@@ -78,16 +74,18 @@ class Detector:
         float
             Porcentaje de intersección
         '''
-        if rectangle1[0] > rectangle2[0] and rectangle1[1] > rectangle2[1] and rectangle1[0] + rectangle1[2] < rectangle2[0] + rectangle2[2] and rectangle1[1] + rectangle1[3] < rectangle2[1] + rectangle2[3]:
+        if rectangle1[0] >= rectangle2[0] and rectangle1[1] >= rectangle2[1] and rectangle1[0] + rectangle1[2] <= rectangle2[0] + rectangle2[2] and rectangle1[1] + rectangle1[3] <= rectangle2[1] + rectangle2[3]:
             return 1.0
-        if rectangle2[0] > rectangle1[0] and rectangle2[1] > rectangle1[1] and rectangle2[0] + rectangle2[2] < rectangle1[0] + rectangle1[2] and rectangle2[1] + rectangle2[3] < rectangle1[1] + rectangle1[3]:
+        elif rectangle2[0] >= rectangle1[0] and rectangle2[1] >= rectangle1[1] and rectangle2[0] + rectangle2[2] <= rectangle1[0] + rectangle1[2] and rectangle2[1] + rectangle2[3] <= rectangle1[1] + rectangle1[3]:
             return 1.0
 
-        i = self.intersection_area(rectangle1, rectangle2)
-        u = self.union_area(rectangle1, rectangle2)
+        i = abs(self.intersection_area(rectangle1, rectangle2))
+        u = abs(self.union_area(rectangle1, rectangle2))
+        if u == 0 and i > 0:
+            return 1.0
         if u == 0:
             return 0.0
-        return i / u
+        return round(i/u, 2)
 
     def intersection_area(self, rectangle1, rectangle2):
         '''
@@ -105,10 +103,12 @@ class Detector:
         int
             Área de intersección
         '''
-        # compute the intersection area
-        intersection_area = (
-            min(rectangle1[0] + rectangle1[2], rectangle2[0] + rectangle2[2]) - max(rectangle1[0], rectangle2[0])) * (
-                min(rectangle1[1] + rectangle1[3], rectangle2[1] + rectangle2[3]) - max(rectangle1[1], rectangle2[1]))
+        # compute the intersection arean
+        x1 = max(rectangle1[0], rectangle2[0])
+        y1 = max(rectangle1[1], rectangle2[1])
+        x2 = min(rectangle1[0] + rectangle1[2], rectangle2[0] + rectangle2[2])
+        y2 = min(rectangle1[1] + rectangle1[3], rectangle2[1] + rectangle2[3])
+        intersection_area = max(0, x2 - x1) * max(0, y2 - y1)
         return intersection_area
 
     def union_area(self, rectangle1, rectangle2):
@@ -126,10 +126,8 @@ class Detector:
         int
             Área de la unión
         '''
-        # compute the union area
-        union_area = (
-            rectangle1[2] * rectangle1[3] + rectangle2[2] * rectangle2[3] - self.intersection_area(rectangle1, rectangle2))
-        return union_area
+
+        return rectangle1[2] * rectangle1[3] + rectangle2[2] * rectangle2[3] - self.intersection_area(rectangle1, rectangle2)
 
     def enhance_blue_red(self, image):
         '''
@@ -185,20 +183,22 @@ class Detector:
         return_list = []
         for rect in rects:
             x, y, w, h = rect
-            if x > factor:
-                x = x - int(factor/2)
+            pixels = (w+h)*factor
+            pixels = int(pixels)
+            if x > pixels:
+                x = x - int(pixels/2)
             else:
                 x = 1
-            if y > factor:
-                y = y - int(factor/2)
+            if y > pixels:
+                y = y - int(pixels/2)
             else:
                 y = 1
-            if w < shape[1] - factor:
-                w = w + factor
+            if w < shape[1] - pixels:
+                w = w + pixels
             else:
                 w = shape[1]
-            if h < shape[0] - factor:
-                h = h + factor
+            if h < shape[0] - pixels:
+                h = h + pixels
             else:
                 h = shape[0]
 
@@ -222,8 +222,8 @@ class Detector:
         '''
         enchance_image = self.enhance_blue_red(image)
         msers, bboxes = self.mser.detectRegions(enchance_image)
-        bboxes = self.filter_squares(bboxes, 0.25)
-        bboxes = self.amplify_area(bboxes, 20, image.shape)
+        bboxes = self.filter_squares(bboxes, 0.30)
+        bboxes = self.amplify_area(bboxes, 0.20, image.shape)
         # turn into set and then into list to remove duplicates
         bboxes = list(set(bboxes))
         return bboxes
@@ -256,6 +256,7 @@ class Detector:
                     break
             if condition:
                 return_list.append(bboxes[i])
+        return_list = list(set(return_list))
         return return_list
 
     def equal_region(self, region1, region2):
@@ -325,3 +326,36 @@ class Detector:
         # print the dtype of the feature vector
         feature_vector = list(feature_vector)
         return feature_vector
+
+    def multi_class_classifier(self, test_images, clasificadores_binarios):
+        tests_images_classified = {}
+        print('Aplicando clasificador multiclase...')
+        for image in tqdm(test_images.keys()):
+            image_copy = test_images[image]
+            regions = self.detect_regions(image_copy)
+            regions = self.filter_overlapping_squares(regions, 0.5)
+            classified_regions = []
+            for region in regions:
+                x, y, w, h = region
+                cropped_image = image_copy[y:y+h, x:x+w]
+                if cropped_image.shape[0] != 0 and cropped_image.shape[1] != 0:
+                    cropped_image = cv2.resize(cropped_image, (32, 32))
+                    hog_result = self.hog(cropped_image)
+                    best_match = None
+                    best_match_value = 0
+                    for key in clasificadores_binarios.keys():
+                        probability = clasificadores_binarios[key].predict_proba(
+                            [hog_result])
+                        probability = probability[0][1]
+                        if probability > best_match_value:
+                            best_match = key
+                            best_match_value = probability
+                    if (best_match is not None) and (best_match_value > 0.5):
+                        classified_regions.append(
+                            (region, (best_match, best_match_value)))
+            printed_image = self.print_rectangles(
+                image_copy, classified_regions)
+            tests_images_classified[image] = (
+                printed_image, classified_regions)
+
+        return tests_images_classified

@@ -1,6 +1,8 @@
 
+from multiprocessing import Condition
 import os
 import cv2
+from cv2 import rectangle
 import numpy as np
 from Image import return_type
 from Image import SignalType
@@ -44,7 +46,8 @@ class Warehouse:
         type = int(args[5])
         signal_type = return_type(type)
         name = args[0]
-        rectangle = (minx, miny, maxx, maxy)
+        # return the rectangle with the format (x, y, width, height)
+        rectangle = (minx, miny, maxx - minx, maxy - miny)
         if signal_type in self.clasificadores_binarios.keys():
             crop_image = master_image[miny:maxy, minx:maxx]
             self.clasificadores_binarios[signal_type].append(
@@ -97,20 +100,33 @@ class Warehouse:
                 if filename in self.train_images_info.keys():
                     signal_regions = self.train_images_info[filename]
                     for trash_region in trash_regions:
+                        condition = True
                         for signal_region in signal_regions:
-                            if (self.detector.overlap_rectangle(trash_region, signal_region) < 0.3):
-                                incorrect_data.append(
-                                    img[trash_region[1]:trash_region[3], trash_region[0]:trash_region[2]])
+                            if(self.detector.overlap_rectangle(trash_region, signal_region) > 0.1):
+                                condition = False
+                    if condition:
+                        incorrect_data.append(
+                            img[trash_region[1]:trash_region[1]+trash_region[3], trash_region[0]:trash_region[0]+trash_region[2]])
                 else:
                     for trash_region in trash_regions:
                         incorrect_data.append(
-                            img[trash_region[1]:trash_region[3], trash_region[0]:trash_region[2]])
-        incorrect_data = [
-            x for x in incorrect_data if x.shape[0] != 0 and x.shape[1] != 0]
+                            img[trash_region[1]:trash_region[1]+trash_region[3], trash_region[0]:trash_region[0]+trash_region[2]])
+
         self.clasificadores_binarios[SignalType.NO_SEÑAL] = incorrect_data
 
-    def data_treatment(self):
+        # create a folder called debugg, and inside it, save the images for each signal type in self.clasificadores_binarios
+    def save_debugg(self):
+        if not os.path.exists('debugg'):
+            os.makedirs('debugg')
 
+        for signal_type in self.clasificadores_binarios.keys():
+            if not os.path.exists('debugg/' + signal_type.name):
+                os.makedirs('debugg/' + signal_type.name)
+            for i, image in enumerate(self.clasificadores_binarios[signal_type]):
+                cv2.imwrite('debugg/' + signal_type.name +
+                            '/' + str(i) + '.jpg', image)
+
+    def data_treatment(self):
         print('Aplicando el algoritmo HOG a las imagenes de entrenamiento...')
         for key in tqdm(self.clasificadores_binarios.keys()):
             imagenes_señal = self.clasificadores_binarios[key]
@@ -135,40 +151,6 @@ class Warehouse:
             labels = np.append(labels, aux)
             labels = labels.astype(np.float32)
             self.clasificadores_binarios[key] = lda.fit(signal_data, labels)
-
-    def multi_class_classifier(self):
-        tests_images_classified = {}
-        print('Aplicando clasificador multiclase...')
-        for image in tqdm(self.test_images.keys()):
-            image_copy = self.test_images[image]
-            regions = self.detector.detect_regions(image_copy)
-            regions = self.detector.filter_overlapping_squares(regions, 0.5)
-            classified_regions = []
-            for region in regions:
-                x, y, w, h = region
-                cropped_image = image_copy[y:y+h, x:x+w]
-                if cropped_image.shape[0] != 0 and cropped_image.shape[1] != 0:
-                    cropped_image = cv2.resize(cropped_image, (32, 32))
-                    hog_result = self.detector.hog(cropped_image)
-                    best_match = None
-                    best_match_value = 0
-                    for key in self.clasificadores_binarios.keys():
-                        probability = self.clasificadores_binarios[key].predict_proba(
-                            [hog_result])
-                        probability = probability[0][1]
-                        print(probability)
-                        if probability > best_match_value:
-                            best_match = key
-                            best_match_value = probability
-                    if (best_match is not None) and (best_match_value > 0.95):
-                        classified_regions.append(
-                            (region, (best_match, best_match_value)))
-            printed_image = self.detector.print_rectangles(
-                image_copy, classified_regions)
-            tests_images_classified[image] = (
-                printed_image, classified_regions)
-
-        return tests_images_classified
 
     def load_test_images(self, path):
         '''
