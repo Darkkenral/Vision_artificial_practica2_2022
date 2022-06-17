@@ -1,8 +1,6 @@
 
-from multiprocessing import Condition
 import os
 import cv2
-from cv2 import rectangle
 import numpy as np
 from Image import return_type
 from Image import SignalType
@@ -43,10 +41,9 @@ class Warehouse:
         miny = int(args[2])
         maxx = int(args[3])
         maxy = int(args[4])
-        type = int(args[5])
-        signal_type = return_type(type)
+        type_value = int(args[5])
+        signal_type = return_type(type_value)
         name = args[0]
-        # return the rectangle with the format (x, y, width, height)
         rectangle = (minx, miny, maxx - minx, maxy - miny)
         if signal_type in self.clasificadores_binarios.keys():
             crop_image = master_image[miny:maxy, minx:maxx]
@@ -79,6 +76,7 @@ class Warehouse:
                     self.train_images_info[image_info[0]].append(image_info[1])
                 else:
                     self.train_images_info[image_info[0]] = [image_info[1]]
+
         self.generate_incorrect_data(path)
 
     def generate_incorrect_data(self, path):
@@ -102,11 +100,11 @@ class Warehouse:
                     for trash_region in trash_regions:
                         condition = True
                         for signal_region in signal_regions:
-                            if(self.detector.overlap_rectangle(trash_region, signal_region) > 0.1):
+                            if(self.detector.get_IoU(trash_region, signal_region) > 0.1):
                                 condition = False
-                    if condition:
-                        incorrect_data.append(
-                            img[trash_region[1]:trash_region[1]+trash_region[3], trash_region[0]:trash_region[0]+trash_region[2]])
+                        if condition:
+                            incorrect_data.append(
+                                img[trash_region[1]:trash_region[1]+trash_region[3], trash_region[0]:trash_region[0]+trash_region[2]])
                 else:
                     for trash_region in trash_regions:
                         incorrect_data.append(
@@ -181,18 +179,13 @@ class Warehouse:
         Guarda las imagenes procesadas en el directorio resultado_imgs
         '''
         print('Guardando imagenes procesadas...')
-        # create the folder if it does not exist in the same directory as the script
         if not os.path.exists('./resultado_imgs'):
             os.makedirs('./resultado_imgs')
         for name, img_data in tqdm(processed_images.items()):
             cv2.imwrite(f'./resultado_imgs/{name}.jpg', img_data[0])
-
         print('Guardando informacion de las imagenes procesadas...')
-        # create a resultado.txt empty to save the information if it does not exist, if it does exist, it will be overwritten
         if not os.path.exists('resultado.txt'):
             open('resultado.txt', 'w').close()
-        # the lines of the resultado.txt file will have the following format:
-        # image_name.ppm;x;y;w;h;SignalType;ssim_score
         with open('resultado.txt', 'w') as f:
             for name, img_data in tqdm(processed_images.items()):
                 for region in img_data[1]:

@@ -1,15 +1,17 @@
+
+import matplotlib
+from matplotlib import pyplot
 import numpy as np
 from tqdm import tqdm
 import cv2
-from matplotlib import contour, image, pyplot
-
+import matplotlib.pyplot as plt
 default_mask_dimension = (32, 32)
 
 
 delta = 2
-max_variation = 0.75
-min_area = 150
-max_area = 28900
+max_variation = 0.50
+min_area = 65
+max_area = 22500
 
 
 class Detector:
@@ -54,11 +56,16 @@ class Detector:
         '''
         filtered_rects = []
         for rect in rects:
-            if 1 - variation < rect[2] / rect[3] < 1 + variation:
-                filtered_rects.append(rect)
+            if rect[2] > rect[3]:
+                if 1 - variation < rect[3] / rect[2] < 1 + variation:
+                    filtered_rects.append(rect)
+            else:
+                if 1 - variation < rect[2] / rect[3] < 1 + variation:
+                    filtered_rects.append(rect)
+
         return filtered_rects
 
-    def overlap_rectangle(self, rectangle1, rectangle2):
+    def get_IoU(self, rectangle1, rectangle2):
         '''
         Calcula el porcentaje de intersección entre dos rectángulos
 
@@ -74,18 +81,14 @@ class Detector:
         float
             Porcentaje de intersección
         '''
-        if rectangle1[0] >= rectangle2[0] and rectangle1[1] >= rectangle2[1] and rectangle1[0] + rectangle1[2] <= rectangle2[0] + rectangle2[2] and rectangle1[1] + rectangle1[3] <= rectangle2[1] + rectangle2[3]:
-            return 1.0
-        elif rectangle2[0] >= rectangle1[0] and rectangle2[1] >= rectangle1[1] and rectangle2[0] + rectangle2[2] <= rectangle1[0] + rectangle1[2] and rectangle2[1] + rectangle2[3] <= rectangle1[1] + rectangle1[3]:
-            return 1.0
 
-        i = abs(self.intersection_area(rectangle1, rectangle2))
-        u = abs(self.union_area(rectangle1, rectangle2))
-        if u == 0 and i > 0:
+        i = self.intersection_area(rectangle1, rectangle2)
+        u = self.union_area(rectangle1, rectangle2)
+        if u == 0 and i != 0:
             return 1.0
         if u == 0:
             return 0.0
-        return round(i/u, 2)
+        return abs(round(i/u, 2))
 
     def intersection_area(self, rectangle1, rectangle2):
         '''
@@ -143,10 +146,10 @@ class Detector:
         Imagen
             Imagen con el contraste aumentado
         '''
-        image_copy = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        gray = cv2.cvtColor(image_copy, cv2.COLOR_RGB2GRAY)
-        image_copy = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        gray = cv2.cvtColor(image_copy, cv2.COLOR_RGB2GRAY)
+        # equalize the blue and red channels
+        image_copy = image.copy()
+        image_copy[:, :, 0] = cv2.equalizeHist(image_copy[:, :, 0])
+        image_copy[:, :, 2] = cv2.equalizeHist(image_copy[:, :, 2])
         b, g, r = cv2.split(image_copy)
         b_chanel = np.array(b, dtype=np.int16)
         g_chanel = np.array(g, dtype=np.int16)
@@ -160,7 +163,47 @@ class Detector:
         bigest_ratios = np.array(np.maximum(
             red_ratio, blue_ratio), dtype=np.int16)
         bigest_ratios[bigest_ratios > 255] = 255
+        # equilize the histogram of the image
         return bigest_ratios.astype(np.uint8)
+
+    def amplify_single_area(self, rect, factor, shape):
+        '''
+        Amplía el área de un rectángulo
+
+        Parameters
+        ----------
+        rects : list
+            Lista de rectángulos
+        factor : int
+            Factor de ampliación
+        shape : tuple
+            Tamaño de la imagen
+
+        Returns
+        -------
+        list
+            Lista de rectángulos ampliados
+        '''
+        x, y, w, h = rect
+        pixels = int(2*min(w, h) * factor)
+        if x > pixels:
+            x = x - int(pixels/2)
+        else:
+            x = 1
+        if y > pixels:
+            y = y - int(pixels/2)
+        else:
+            y = 1
+        if w < shape[1] - pixels:
+            w = w + pixels
+        else:
+            w = shape[1]
+        if h < shape[0] - pixels:
+            h = h + pixels
+        else:
+            h = shape[0]
+
+        return (x, y, w, h)
 
     def amplify_area(self, rects, factor, shape):
         '''
@@ -183,7 +226,8 @@ class Detector:
         return_list = []
         for rect in rects:
             x, y, w, h = rect
-            pixels = (w+h)*factor
+
+            pixels = 2*min(w, h) * factor
             pixels = int(pixels)
             if x > pixels:
                 x = x - int(pixels/2)
@@ -222,13 +266,12 @@ class Detector:
         '''
         enchance_image = self.enhance_blue_red(image)
         msers, bboxes = self.mser.detectRegions(enchance_image)
-        bboxes = self.filter_squares(bboxes, 0.30)
-        bboxes = self.amplify_area(bboxes, 0.20, image.shape)
-        # turn into set and then into list to remove duplicates
-        bboxes = list(set(bboxes))
+        bboxes = self.filter_squares(bboxes, 0.15)
+        bboxes = self.amplify_area(bboxes, 0.15, image.shape)
         return bboxes
+
     # make a method that given a lis of bboxes of the form (x,y,w,h), and a threshold
-    # check that the squares of the bboxes dont overlap too much with each other
+    # check that the squares of the bboxes dont overlap over the threshold, if they do, remove them from the list
 
     def filter_overlapping_squares(self, bboxes, threshold):
         '''
@@ -246,18 +289,17 @@ class Detector:
         list
             Lista de rectángulos filtrados
         '''
-        return_list = []
         bboxes = sorted(bboxes, key=lambda x: x[2]*x[3], reverse=True)
-        for i in range(len(bboxes)):
-            condition = True
-            for j in range(i + 1, len(bboxes)):
-                if self.overlap_rectangle(bboxes[i], bboxes[j]) > threshold:
-                    condition = False
-                    break
-            if condition:
-                return_list.append(bboxes[i])
-        return_list = list(set(return_list))
-        return return_list
+
+        copy_list = bboxes.copy()
+        for region in bboxes:
+            for region2 in bboxes:
+                if not self.equal_region(region, region2):
+                    if self.get_IoU(region, region2) > threshold and region[2]*region[3] > region2[2]*region2[3]:
+                        if region2 in copy_list:
+                            copy_list.remove(region2)
+        copy_list = list(set(copy_list))
+        return copy_list
 
     def equal_region(self, region1, region2):
         '''
@@ -300,7 +342,7 @@ class Detector:
             image = cv2.rectangle(
                 image, (x, y), (x + w, y + h), (0, 255, 0), 2)
             image = cv2.putText(
-                image, info[0].name, (x, y), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                image, info[0].name+""+str(info[1]), (x, y), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
         return image
 
     def hog(self, image):
@@ -333,7 +375,7 @@ class Detector:
         for image in tqdm(test_images.keys()):
             image_copy = test_images[image]
             regions = self.detect_regions(image_copy)
-            regions = self.filter_overlapping_squares(regions, 0.5)
+            regions = self.filter_overlapping_squares(regions, 0.50)
             classified_regions = []
             for region in regions:
                 x, y, w, h = region
@@ -342,11 +384,12 @@ class Detector:
                     cropped_image = cv2.resize(cropped_image, (32, 32))
                     hog_result = self.hog(cropped_image)
                     best_match = None
-                    best_match_value = 0
+                    best_match_value = 0.0
                     for key in clasificadores_binarios.keys():
                         probability = clasificadores_binarios[key].predict_proba(
                             [hog_result])
                         probability = probability[0][1]
+                        probability = np.round(probability, 2)
                         if probability > best_match_value:
                             best_match = key
                             best_match_value = probability
