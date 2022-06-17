@@ -1,17 +1,22 @@
-
-import matplotlib
-from matplotlib import pyplot
+from cv2 import cvtColor
 import numpy as np
 from tqdm import tqdm
 import cv2
 import matplotlib.pyplot as plt
+from sklearn.metrics import confusion_matrix
+from sklearn.metrics import accuracy_score
+from sklearn.metrics import recall_score
+from sklearn.metrics import precision_score
+from sklearn.metrics import f1_score
+from sklearn.metrics import plot_confusion_matrix
+from scipy import stats
+
+
 default_mask_dimension = (32, 32)
-
-
-delta = 2
-max_variation = 0.50
-min_area = 65
-max_area = 22500
+delta = 12
+max_variation = 0.75
+min_area = 75
+max_area = 2250
 
 
 class Detector:
@@ -19,6 +24,8 @@ class Detector:
     def __init__(self):
         self.mser = cv2.MSER_create(
             delta=delta, min_area=min_area, max_area=max_area, max_variation=max_variation)
+        self.mser_rb = cv2.MSER_create(delta=2, min_area=75,
+                                       max_area=22500, max_variation=0.75)
 
     def resize_img(self, image):
         '''
@@ -81,6 +88,10 @@ class Detector:
         float
             Porcentaje de intersección
         '''
+        if rectangle1[0] > rectangle2[0] and rectangle1[1] > rectangle2[1] and rectangle1[0] + rectangle1[2] < rectangle2[0] + rectangle2[2] and rectangle1[1] + rectangle1[3] < rectangle2[1] + rectangle2[3]:
+            return 1.0
+        if rectangle2[0] > rectangle1[0] and rectangle2[1] > rectangle1[1] and rectangle2[0] + rectangle2[2] < rectangle1[0] + rectangle1[2] and rectangle2[1] + rectangle2[3] < rectangle1[1] + rectangle1[3]:
+            return 1.0
 
         i = self.intersection_area(rectangle1, rectangle2)
         u = self.union_area(rectangle1, rectangle2)
@@ -250,7 +261,7 @@ class Detector:
 
         return return_list
 
-    def detect_regions(self, image):
+    def ligth_detect_regions(self, image):
         '''
         Detecta las regiones de interes de una imagen aplicando el algoritmo MSER
 
@@ -265,13 +276,38 @@ class Detector:
             Lista de regiones de interes
         '''
         enchance_image = self.enhance_blue_red(image)
-        msers, bboxes = self.mser.detectRegions(enchance_image)
+        msers, bboxes = self.mser_rb.detectRegions(enchance_image)
         bboxes = self.filter_squares(bboxes, 0.15)
-        bboxes = self.amplify_area(bboxes, 0.15, image.shape)
+        bboxes = self.amplify_area(bboxes, 0.12, image.shape)
+        bboxes = self.filter_overlapping_squares(bboxes, 0.5)
+        bboxes = list(set(bboxes))
         return bboxes
 
-    # make a method that given a lis of bboxes of the form (x,y,w,h), and a threshold
-    # check that the squares of the bboxes dont overlap over the threshold, if they do, remove them from the list
+    def complete_detect_regions(self, image):
+        '''
+        Detecta las regiones de interes de una imagen aplicando el algoritmo MSER
+
+        Parameters
+        ----------
+        image : Imagen
+            Imagen a la que se le aplicará el algoritmo MSER
+
+        Returnsimage.shape
+        -------
+        list
+            Lista de regiones de interes
+        '''
+        enchance_image = cvtColor(image, cv2.COLOR_BGR2GRAY)
+        enchance_image = cv2.equalizeHist(enchance_image)
+        msers, bboxes = self.mser.detectRegions(enchance_image)
+        enchance_image = self.enhance_blue_red(image)
+        msers, secondbboxes = self.mser_rb.detectRegions(enchance_image)
+        bboxes = np.append(bboxes, secondbboxes, axis=0)
+        bboxes = self.filter_squares(bboxes, 0.15)
+        bboxes = self.amplify_area(bboxes, 0.12, image.shape)
+        bboxes = self.filter_overlapping_squares(bboxes, 0.5)
+        bboxes = list(set(bboxes))
+        return bboxes
 
     def filter_overlapping_squares(self, bboxes, threshold):
         '''
@@ -290,7 +326,6 @@ class Detector:
             Lista de rectángulos filtrados
         '''
         bboxes = sorted(bboxes, key=lambda x: x[2]*x[3], reverse=True)
-
         copy_list = bboxes.copy()
         for region in bboxes:
             for region2 in bboxes:
@@ -298,7 +333,6 @@ class Detector:
                     if self.get_IoU(region, region2) > threshold and region[2]*region[3] > region2[2]*region2[3]:
                         if region2 in copy_list:
                             copy_list.remove(region2)
-        copy_list = list(set(copy_list))
         return copy_list
 
     def equal_region(self, region1, region2):
@@ -374,8 +408,8 @@ class Detector:
         print('Aplicando clasificador multiclase...')
         for image in tqdm(test_images.keys()):
             image_copy = test_images[image]
-            regions = self.detect_regions(image_copy)
-            regions = self.filter_overlapping_squares(regions, 0.50)
+            # regions = self.complete_detect_regions(image_copy)
+            regions = self.ligth_detect_regions(image_copy)
             classified_regions = []
             for region in regions:
                 x, y, w, h = region
@@ -400,5 +434,26 @@ class Detector:
                 image_copy, classified_regions)
             tests_images_classified[image] = (
                 printed_image, classified_regions)
-
         return tests_images_classified
+
+    def evaluate_classifier(self, validation_set, clasificadores_binarios):
+        print('Evaluando clasificador...')
+        y_true = []
+        labels = []
+        for key in validation_set.keys():
+            for element in validation_set[key]:
+                y_true.append(key.value)
+        y_pred = []
+
+        for key, data in validation_set.items():
+            for element in data:
+                vclass = 0
+                for clasificador in clasificadores_binarios.keys():
+                    clasificadores_binarios[clasificador].predict([element])
+                    result = stats.mode(vclass)[0][0]
+                    if vclass < result:
+                        vclass = result
+                y_pred.append(vclass)
+                result = stats.mode(vclass)[0][0]
+        cmatrix = confusion_matrix(y_true, y_pred)
+        print(cmatrix)

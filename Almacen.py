@@ -17,6 +17,7 @@ class Warehouse:
         ], SignalType.DIRECCION_PROHIBIDA: [], SignalType.CEDA_EL_PASO: [], SignalType.DIRECCION_OBLIGATORIA: [], SignalType.NO_SEÑAL: []}
         self.train_images_info = {}
         self.test_images = {}
+        self.validate_set = {}
         self.detector = Detector()
 
     def line_to_img(self, line: str, path):
@@ -94,13 +95,15 @@ class Warehouse:
         for filename in tqdm(os.listdir(path)):
             if filename.endswith(".jpg"):
                 img = cv2.imread(path+'/' + filename)
-                trash_regions = self.detector.detect_regions(img)
+
+                #trash_regions = self.detector.complete_detect_regions(img)
+                trash_regions = self.detector.ligth_detect_regions(img)
                 if filename in self.train_images_info.keys():
                     signal_regions = self.train_images_info[filename]
                     for trash_region in trash_regions:
                         condition = True
                         for signal_region in signal_regions:
-                            if(self.detector.get_IoU(trash_region, signal_region) > 0.1):
+                            if(self.detector.get_IoU(trash_region, signal_region) > 0.0):
                                 condition = False
                         if condition:
                             incorrect_data.append(
@@ -109,7 +112,6 @@ class Warehouse:
                     for trash_region in trash_regions:
                         incorrect_data.append(
                             img[trash_region[1]:trash_region[1]+trash_region[3], trash_region[0]:trash_region[0]+trash_region[2]])
-
         self.clasificadores_binarios[SignalType.NO_SEÑAL] = incorrect_data
 
         # create a folder called debugg, and inside it, save the images for each signal type in self.clasificadores_binarios
@@ -133,6 +135,10 @@ class Warehouse:
                 hog_result = self.detector.hog(img)
                 feature_vector = feature_vector + [hog_result]
             self.clasificadores_binarios[key] = feature_vector
+        print('Almacenando subconjunto de datos de validacion...')
+        for key in tqdm(self.clasificadores_binarios.keys()):
+            self.validate_set[key] = self.clasificadores_binarios[key][int(
+                len(self.clasificadores_binarios[key]) * 0.1):]
 
         print('Aplicando reduccion de dimensionalidad a las imagenes de entrenamiento con el algoritmo LDA y generando Clasificadores binarios ...')
         no_signal_data = self.clasificadores_binarios[SignalType.NO_SEÑAL]
