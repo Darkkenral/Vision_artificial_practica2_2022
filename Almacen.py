@@ -137,8 +137,9 @@ class Warehouse:
             self.clasificadores_binarios[key] = feature_vector
         print('Almacenando subconjunto de datos de validacion...')
         for key in tqdm(self.clasificadores_binarios.keys()):
-            self.validate_set[key] = self.clasificadores_binarios[key][int(
-                len(self.clasificadores_binarios[key]) * 0.1):]
+            if key is not SignalType.NO_SEÑAL:
+                self.validate_set[key] = self.clasificadores_binarios[key][int(
+                    len(self.clasificadores_binarios[key]) * 0.1):]
 
         print('Aplicando reduccion de dimensionalidad a las imagenes de entrenamiento con el algoritmo LDA y generando Clasificadores binarios ...')
         no_signal_data = self.clasificadores_binarios[SignalType.NO_SEÑAL]

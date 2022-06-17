@@ -1,16 +1,14 @@
-from cv2 import cvtColor
+from cv2 import cvtColor, normalize
 import numpy as np
 from tqdm import tqdm
 import cv2
 import matplotlib.pyplot as plt
-from sklearn.metrics import confusion_matrix
 from sklearn.metrics import accuracy_score
 from sklearn.metrics import recall_score
 from sklearn.metrics import precision_score
 from sklearn.metrics import f1_score
-from sklearn.metrics import plot_confusion_matrix
-from scipy import stats
-
+from sklearn.metrics import ConfusionMatrixDisplay
+import pandas as pd
 
 default_mask_dimension = (32, 32)
 delta = 12
@@ -438,22 +436,53 @@ class Detector:
 
     def evaluate_classifier(self, validation_set, clasificadores_binarios):
         print('Evaluando clasificador...')
-        y_true = []
-        labels = []
-        for key in validation_set.keys():
-            for element in validation_set[key]:
-                y_true.append(key.value)
-        y_pred = []
+        # for 1 loop
+        for _ in tqdm(range(1)):
+            y_true = []
+            for key in validation_set.keys():
+                for _ in validation_set[key]:
+                    y_true.append(key.value)
+            y_pred = []
+            for key in validation_set.keys():
+                for element in validation_set[key]:
+                    # element is a hog vector
+                    # use the classifier to predict the class of the hog vector
+                    best_match = 0
+                    for clasificador in clasificadores_binarios.keys():
+                        match_class = clasificadores_binarios[clasificador].predict(
+                            [element])[0]
+                        if match_class != 0:
+                            best_match = match_class
+                            break
+                    y_pred.append(best_match)
+            ConfusionMatrixDisplay.from_predictions(y_true, y_pred)
+            plt.title('Matriz de confusión')
+            plt.savefig('matriz_confusion.png')
+            plt.close()
 
-        for key, data in validation_set.items():
-            for element in data:
-                vclass = 0
-                for clasificador in clasificadores_binarios.keys():
-                    clasificadores_binarios[clasificador].predict([element])
-                    result = stats.mode(vclass)[0][0]
-                    if vclass < result:
-                        vclass = result
-                y_pred.append(vclass)
-                result = stats.mode(vclass)[0][0]
-        cmatrix = confusion_matrix(y_true, y_pred)
-        print(cmatrix)
+            # create a table using pandas
+            # the columns are two , the metrics and the values
+            # the rows are the name of the metrics and the values
+            # the metrics are: accuracy, precision, recall, f1_score, support
+            # the values are: the values of the metrics
+            accuracy_score_value = accuracy_score(
+                y_true, y_pred, normalize=True)
+            precision_score_value = precision_score(
+                y_true, y_pred, labels=[1, 2, 3, 4, 5], average='micro')
+            recall_score_value = recall_score(
+                y_true, y_pred, labels=[1, 2, 3, 4, 5], average='micro')
+            fi_score_value = f1_score(y_true, y_pred, labels=[
+                1, 2, 3, 4, 5], average='micro')
+            table = pd.DataFrame({'Metricas': ['Accuracy', 'Precision', 'Recall', 'F1_Score'],   'Valores': [
+                accuracy_score_value, precision_score_value, recall_score_value, fi_score_value]})
+            # create a table image using matplotlib
+            # the table is a pandas dataframe
+            # the table is plotted using matplotlib
+            # the table is saved as a png file
+            plt.figure(figsize=(10, 5))
+            plt.title('Evaluación del clasificador')
+            plt.axis('off')
+            plt.table(cellText=table.values,
+                      colLabels=table.columns, loc='center')
+            plt.savefig('evaluacion_clasificador.png')
+            plt.close()
