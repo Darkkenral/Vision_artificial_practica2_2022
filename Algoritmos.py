@@ -1,4 +1,6 @@
-from cv2 import cvtColor, normalize
+
+from cv2 import cvtColor
+from more_itertools import sample
 import numpy as np
 from tqdm import tqdm
 import cv2
@@ -8,7 +10,11 @@ from sklearn.metrics import recall_score
 from sklearn.metrics import precision_score
 from sklearn.metrics import f1_score
 from sklearn.metrics import ConfusionMatrixDisplay
+from sklearn.metrics import RocCurveDisplay
+from sklearn.metrics import PrecisionRecallDisplay
 import pandas as pd
+
+from Image import SignalType
 
 default_mask_dimension = (32, 32)
 delta = 12
@@ -401,88 +407,119 @@ class Detector:
         feature_vector = list(feature_vector)
         return feature_vector
 
-    def multi_class_classifier(self, test_images, clasificadores_binarios):
+    def multi_class_classifier_HOG_LDA_BAYES(self, test_images, clasificadores_binarios):
         tests_images_classified = {}
         print('Aplicando clasificador multiclase...')
         for image in tqdm(test_images.keys()):
             image_copy = test_images[image]
             # regions = self.complete_detect_regions(image_copy)
             regions = self.ligth_detect_regions(image_copy)
-            classified_regions = []
-            for region in regions:
-                x, y, w, h = region
-                cropped_image = image_copy[y:y+h, x:x+w]
-                if cropped_image.shape[0] != 0 and cropped_image.shape[1] != 0:
-                    cropped_image = cv2.resize(cropped_image, (32, 32))
-                    hog_result = self.hog(cropped_image)
-                    best_match = None
-                    best_match_value = 0.0
-                    for key in clasificadores_binarios.keys():
-                        probability = clasificadores_binarios[key].predict_proba(
-                            [hog_result])
-                        probability = probability[0][1]
-                        probability = np.round(probability, 2)
-                        if probability > best_match_value:
-                            best_match = key
-                            best_match_value = probability
-                    if (best_match is not None) and (best_match_value > 0.5):
-                        classified_regions.append(
-                            (region, (best_match, best_match_value)))
+
+            classified_regions = self.clasificador_regiones(
+                clasificadores_binarios, image_copy, regions)
+
             printed_image = self.print_rectangles(
                 image_copy, classified_regions)
             tests_images_classified[image] = (
                 printed_image, classified_regions)
         return tests_images_classified
 
+    def clasificador_regiones(self, clasificadores_binarios, image_copy, regions):
+        classified_regions = []
+        for region in regions:
+            x, y, w, h = region
+            cropped_image = image_copy[y:y+h, x:x+w]
+            if cropped_image.shape[0] != 0 and cropped_image.shape[1] != 0:
+                cropped_image = cv2.resize(cropped_image, (32, 32))
+
+                best_match, best_match_value = self.find_best_match(
+                    clasificadores_binarios, cropped_image)
+
+                if (best_match is not None) and (best_match_value > 0.5):
+                    classified_regions.append(
+                        (region, (best_match, best_match_value)))
+
+        return classified_regions
+
+    def find_best_match(self, clasificadores_binarios, cropped_image):
+        hog_result = self.hog(cropped_image)
+        best_match = None
+        best_match_value = 0.0
+        for key in clasificadores_binarios.keys():
+            probability = clasificadores_binarios[key].predict_proba(
+                [hog_result])
+            probability = probability[0][1]
+            probability = np.round(probability, 2)
+            if probability > best_match_value:
+                best_match = key
+                best_match_value = probability
+        return best_match, best_match_value
+
     def evaluate_classifier(self, validation_set, clasificadores_binarios):
         print('Evaluando clasificador...')
-        # for 1 loop
         for _ in tqdm(range(1)):
-            y_true = []
-            for key in validation_set.keys():
-                for _ in validation_set[key]:
-                    y_true.append(key.value)
-            y_pred = []
-            for key in validation_set.keys():
-                for element in validation_set[key]:
-                    # element is a hog vector
-                    # use the classifier to predict the class of the hog vector
-                    best_match = 0
-                    for clasificador in clasificadores_binarios.keys():
-                        match_class = clasificadores_binarios[clasificador].predict(
-                            [element])[0]
-                        if match_class != 0:
-                            best_match = match_class
-                            break
-                    y_pred.append(best_match)
-            ConfusionMatrixDisplay.from_predictions(y_true, y_pred)
-            plt.title('Matriz de confusión')
-            plt.savefig('matriz_confusion.png')
-            plt.close()
+            # generacion de datos de validacion
+            y_true = self.generate_y_true(validation_set)
+            y_pred = self.generate_y_pred(
+                validation_set, clasificadores_binarios)
+            # creacion de la matriz de confusion
+            self.get_confussion_matrix(y_true, y_pred)
+            # generacion de tabla con datos estadisticos
+            self.get_statics_table(y_true, y_pred)
 
-            # create a table using pandas
-            # the columns are two , the metrics and the values
-            # the rows are the name of the metrics and the values
-            # the metrics are: accuracy, precision, recall, f1_score, support
-            # the values are: the values of the metrics
-            accuracy_score_value = accuracy_score(
-                y_true, y_pred, normalize=True)
-            precision_score_value = precision_score(
-                y_true, y_pred, labels=[1, 2, 3, 4, 5], average='micro')
-            recall_score_value = recall_score(
-                y_true, y_pred, labels=[1, 2, 3, 4, 5], average='micro')
-            fi_score_value = f1_score(y_true, y_pred, labels=[
-                1, 2, 3, 4, 5], average='micro')
-            table = pd.DataFrame({'Metricas': ['Accuracy', 'Precision', 'Recall', 'F1_Score'],   'Valores': [
-                accuracy_score_value, precision_score_value, recall_score_value, fi_score_value]})
-            # create a table image using matplotlib
-            # the table is a pandas dataframe
-            # the table is plotted using matplotlib
-            # the table is saved as a png file
-            plt.figure(figsize=(10, 5))
-            plt.title('Evaluación del clasificador')
-            plt.axis('off')
-            plt.table(cellText=table.values,
-                      colLabels=table.columns, loc='center')
-            plt.savefig('evaluacion_clasificador.png')
-            plt.close()
+            self.get_roc_curve(
+                validation_set, y_true, y_pred)
+
+    def get_roc_curve(self, validation_set, y_true, y_pred):
+        for key in validation_set:
+            if key is not SignalType.NO_SEÑAL:
+                RocCurveDisplay.from_predictions(
+                    y_true=y_true, y_pred=y_pred, pos_label=key.value, name=key.name)
+                plt.savefig('roc_curve'+key.name+'.png')
+                plt.close()
+
+    def get_statics_table(self, y_true, y_pred):
+        accuracy_score_value = accuracy_score(
+            y_true, y_pred, normalize=True)
+        precision_score_value = precision_score(
+            y_true, y_pred, labels=[1, 2, 3, 4, 5, 6], average='micro')
+        recall_score_value = recall_score(
+            y_true, y_pred, labels=[1, 2, 3, 4, 5, 6], average='micro')
+        fi_score_value = f1_score(y_true, y_pred, labels=[
+            1, 2, 3, 4, 5, 6], average='micro')
+        table = pd.DataFrame({'Metricas': ['Accuracy', 'Precision', 'Recall', 'F1_Score'],   'Valores': [
+            accuracy_score_value, precision_score_value, recall_score_value, fi_score_value]})
+        plt.figure(figsize=(10, 5))
+        plt.title('Evaluación del clasificador')
+        plt.axis('off')
+        plt.table(cellText=table.values,
+                  colLabels=table.columns, loc='center')
+        plt.savefig('evaluacion_clasificador.png')
+        plt.close()
+
+    def get_confussion_matrix(self, y_true, y_pred):
+        ConfusionMatrixDisplay.from_predictions(y_true, y_pred)
+        plt.title('Matriz de confusión')
+        plt.savefig('matriz_confusion.png')
+        plt.close()
+
+    def generate_y_pred(self, validation_set, clasificadores_binarios):
+        y_pred = []
+        for key in validation_set.keys():
+            for element in validation_set[key]:
+                best_match = 0
+                for clasificador in clasificadores_binarios.keys():
+                    match_class = clasificadores_binarios[clasificador].predict(
+                        [element])[0]
+                    if match_class != 0:
+                        best_match = match_class
+                        break
+                y_pred.append(best_match)
+        return y_pred
+
+    def generate_y_true(self, validation_set):
+        y_true = []
+        for key in validation_set.keys():
+            for _ in validation_set[key]:
+                y_true.append(key.value)
+        return y_true

@@ -7,6 +7,7 @@ from Image import SignalType
 from tqdm import tqdm
 from Algoritmos import *
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
+
 default_mask_dimension = (32, 32)
 
 
@@ -17,7 +18,7 @@ class Warehouse:
         ], SignalType.DIRECCION_PROHIBIDA: [], SignalType.CEDA_EL_PASO: [], SignalType.DIRECCION_OBLIGATORIA: [], SignalType.NO_SEÑAL: []}
         self.train_images_info = {}
         self.test_images = {}
-        self.validate_set = {}
+        self.validation_set = {}
         self.detector = Detector()
 
     def line_to_img(self, line: str, path):
@@ -46,7 +47,7 @@ class Warehouse:
         signal_type = return_type(type_value)
         name = args[0]
         rectangle = (minx, miny, maxx - minx, maxy - miny)
-        if signal_type in self.clasificadores_binarios.keys():
+        if signal_type in self.clasificadores_binarios:
             crop_image = master_image[miny:maxy, minx:maxx]
             self.clasificadores_binarios[signal_type].append(
                 crop_image)
@@ -66,14 +67,18 @@ class Warehouse:
             En caso de que el directorio proporcionado no exista
         '''
         if not os.path.isdir(path):
-            raise Exception(f'File {path + "/gt.txt"} not found!')
+            raise Exception(
+                f'File {path + "/gt.txt"} No se ha encontrado el fichero gt.txt!')
         print('Cargando datos de entrenamiento...')
         gt_file = path + '/gt.txt'
-        num_lines = sum(1 for line in open(gt_file, 'r'))
+        num_lines = 0
+        with open(gt_file) as f:
+            for _ in f:
+                num_lines += 1
         with open(gt_file, 'r') as f:
             for i, line in enumerate(tqdm(f, total=num_lines)):
                 image_info = self.line_to_img(line, path)
-                if image_info[0] in self.train_images_info.keys():
+                if image_info[0] in self.train_images_info:
                     self.train_images_info[image_info[0]].append(image_info[1])
                 else:
                     self.train_images_info[image_info[0]] = [image_info[1]]
@@ -95,38 +100,30 @@ class Warehouse:
         for filename in tqdm(os.listdir(path)):
             if filename.endswith(".jpg"):
                 img = cv2.imread(path+'/' + filename)
-
                 #trash_regions = self.detector.complete_detect_regions(img)
                 trash_regions = self.detector.ligth_detect_regions(img)
-                if filename in self.train_images_info.keys():
-                    signal_regions = self.train_images_info[filename]
-                    for trash_region in trash_regions:
-                        condition = True
-                        for signal_region in signal_regions:
-                            if(self.detector.get_IoU(trash_region, signal_region) > 0.0):
-                                condition = False
-                        if condition:
-                            incorrect_data.append(
-                                img[trash_region[1]:trash_region[1]+trash_region[3], trash_region[0]:trash_region[0]+trash_region[2]])
-                else:
-                    for trash_region in trash_regions:
-                        incorrect_data.append(
-                            img[trash_region[1]:trash_region[1]+trash_region[3], trash_region[0]:trash_region[0]+trash_region[2]])
+                self.filter_trash_regions(
+                    incorrect_data, filename, img, trash_regions)
         self.clasificadores_binarios[SignalType.NO_SEÑAL] = incorrect_data
 
-        # create a folder called debugg, and inside it, save the images for each signal type in self.clasificadores_binarios
-    def save_debugg(self):
-        if not os.path.exists('debugg'):
-            os.makedirs('debugg')
+    def filter_trash_regions(self, incorrect_data, filename, img, trash_regions):
 
-        for signal_type in self.clasificadores_binarios.keys():
-            if not os.path.exists('debugg/' + signal_type.name):
-                os.makedirs('debugg/' + signal_type.name)
-            for i, image in enumerate(self.clasificadores_binarios[signal_type]):
-                cv2.imwrite('debugg/' + signal_type.name +
-                            '/' + str(i) + '.jpg', image)
+        if filename in self.train_images_info:
+            signal_regions = self.train_images_info[filename]
+            for trash_region in trash_regions:
+                condition = True
+                for signal_region in signal_regions:
+                    if(self.detector.get_IoU(trash_region, signal_region) > 0.0):
+                        condition = False
+                if condition:
+                    incorrect_data.append(
+                        img[trash_region[1]:trash_region[1]+trash_region[3], trash_region[0]:trash_region[0]+trash_region[2]])
+        else:
+            for trash_region in trash_regions:
+                incorrect_data.append(
+                    img[trash_region[1]:trash_region[1]+trash_region[3], trash_region[0]:trash_region[0]+trash_region[2]])
 
-    def data_treatment(self):
+    def data_treatment_HOG_LDA_BAYES(self):
         print('Aplicando el algoritmo HOG a las imagenes de entrenamiento...')
         for key in tqdm(self.clasificadores_binarios.keys()):
             imagenes_señal = self.clasificadores_binarios[key]
@@ -137,9 +134,8 @@ class Warehouse:
             self.clasificadores_binarios[key] = feature_vector
         print('Almacenando subconjunto de datos de validacion...')
         for key in tqdm(self.clasificadores_binarios.keys()):
-            if key is not SignalType.NO_SEÑAL:
-                self.validate_set[key] = self.clasificadores_binarios[key][int(
-                    len(self.clasificadores_binarios[key]) * 0.1):]
+            self.validation_set[key] = self.clasificadores_binarios[key][int(
+                len(self.clasificadores_binarios[key]) * 0.1):]
 
         print('Aplicando reduccion de dimensionalidad a las imagenes de entrenamiento con el algoritmo LDA y generando Clasificadores binarios ...')
         no_signal_data = self.clasificadores_binarios[SignalType.NO_SEÑAL]
@@ -156,18 +152,6 @@ class Warehouse:
             labels = np.append(labels, aux)
             labels = labels.astype(np.float32)
             self.clasificadores_binarios[key] = lda.fit(signal_data, labels)
-
-    def load_test_images(self, path):
-        '''
-        Lee todas las imagenes del directorio test y las almacena en el diccionario test_images
-        '''
-        print('Cargando imagenes de prueba...')
-        for filename in tqdm(os.listdir(path)):
-            if filename.endswith(".jpg"):
-                img = cv2.imread(path+'/' + filename)
-                # delete the extension of the image
-                name = filename.split('.')[0]
-                self.test_images[name] = img
 
     def load_test_images(self, path):
         '''

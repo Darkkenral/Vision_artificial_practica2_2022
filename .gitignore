@@ -3276,3 +3276,23 @@ test.ipynb
 evaluacion_clasificador.png
 
 matriz_confusion.png
+
+test_alumnos_jpg/
+
+train_10_ejemplos/
+
+train_jpg/00/
+
+train_jpg/
+
+roc_curveCEDA_EL_PASO.png
+
+roc_curveDIRECCION_OBLIGATORIA.png
+
+roc_curveDIRECCION_PROHIBIDA.png
+
+roc_curvePELIGRO.png
+
+roc_curvePROHIBIDO.png
+
+roc_curveSTOP.png
