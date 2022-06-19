@@ -13,6 +13,7 @@ from sklearn.metrics import ConfusionMatrixDisplay
 from sklearn.metrics import RocCurveDisplay
 from sklearn.metrics import PrecisionRecallDisplay
 import pandas as pd
+import os
 
 from Image import SignalType
 
@@ -385,7 +386,7 @@ class Detector:
 
     def hog(self, image):
 
-        image = cv2.resize(image, (32, 32))
+        image = self.resize_img(image)
         # Parametros HOG
         winSize = (32, 32)
         blockSize = (16, 16)
@@ -407,7 +408,7 @@ class Detector:
         feature_vector = list(feature_vector)
         return feature_vector
 
-    def multi_class_classifier_HOG_LDA_BAYES(self, test_images, clasificadores_binarios):
+    def multi_class_classifier_LDA_BAYES(self, test_images, clasificadores_binarios, clasification_type):
         tests_images_classified = {}
         print('Aplicando clasificador multiclase...')
         for image in tqdm(test_images.keys()):
@@ -416,7 +417,7 @@ class Detector:
             regions = self.ligth_detect_regions(image_copy)
 
             classified_regions = self.clasificador_regiones(
-                clasificadores_binarios, image_copy, regions)
+                clasificadores_binarios, image_copy, regions, clasification_type)
 
             printed_image = self.print_rectangles(
                 image_copy, classified_regions)
@@ -424,13 +425,19 @@ class Detector:
                 printed_image, classified_regions)
         return tests_images_classified
 
-    def clasificador_regiones(self, clasificadores_binarios, image_copy, regions):
+    def clasificador_regiones(self, clasificadores_binarios, image_copy, regions, clasification_type):
         classified_regions = []
         for region in regions:
             x, y, w, h = region
             cropped_image = image_copy[y:y+h, x:x+w]
             if cropped_image.shape[0] != 0 and cropped_image.shape[1] != 0:
-                cropped_image = cv2.resize(cropped_image, (32, 32))
+                cropped_image = self.resize_img(cropped_image)
+                if clasification_type == 'HOG_LDA_BAYES':
+                    cropped_image = self.hog(cropped_image)
+                elif clasification_type == 'GRAY_LDA_BAYES':
+                    cropped_image = cv2.cvtColor(
+                        cropped_image, cv2.COLOR_BGR2GRAY)
+                    cropped_image = cropped_image.flatten()
 
                 best_match, best_match_value = self.find_best_match(
                     clasificadores_binarios, cropped_image)
@@ -441,13 +448,12 @@ class Detector:
 
         return classified_regions
 
-    def find_best_match(self, clasificadores_binarios, cropped_image):
-        hog_result = self.hog(cropped_image)
+    def find_best_match(self, clasificadores_binarios, feature_vector):
         best_match = None
         best_match_value = 0.0
         for key in clasificadores_binarios.keys():
             probability = clasificadores_binarios[key].predict_proba(
-                [hog_result])
+                [feature_vector])
             probability = probability[0][1]
             probability = np.round(probability, 2)
             if probability > best_match_value:
@@ -458,6 +464,10 @@ class Detector:
     def evaluate_classifier(self, validation_set, clasificadores_binarios):
         print('Evaluando clasificador...')
         for _ in tqdm(range(1)):
+            # create a folder called "Evaluation" to save the results
+            if not os.path.exists("Evaluation"):
+                os.makedirs("Evaluation")
+
             # generacion de datos de validacion
             y_true = self.generate_y_true(validation_set)
             y_pred = self.generate_y_pred(
@@ -475,7 +485,7 @@ class Detector:
             if key is not SignalType.NO_SEÑAL:
                 RocCurveDisplay.from_predictions(
                     y_true=y_true, y_pred=y_pred, pos_label=key.value, name=key.name)
-                plt.savefig('roc_curve'+key.name+'.png')
+                plt.savefig('Evaluation/roc_curve'+key.name+'.png')
                 plt.close()
 
     def get_statics_table(self, y_true, y_pred):
@@ -494,13 +504,13 @@ class Detector:
         plt.axis('off')
         plt.table(cellText=table.values,
                   colLabels=table.columns, loc='center')
-        plt.savefig('evaluacion_clasificador.png')
+        plt.savefig('Evaluation/datos_estadisticos.png')
         plt.close()
 
     def get_confussion_matrix(self, y_true, y_pred):
         ConfusionMatrixDisplay.from_predictions(y_true, y_pred)
         plt.title('Matriz de confusión')
-        plt.savefig('matriz_confusion.png')
+        plt.savefig('Evaluation/matriz_confusion.png')
         plt.close()
 
     def generate_y_pred(self, validation_set, clasificadores_binarios):
