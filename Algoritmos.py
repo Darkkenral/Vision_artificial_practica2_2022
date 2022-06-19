@@ -438,7 +438,10 @@ class Detector:
                     cropped_image = cv2.cvtColor(
                         cropped_image, cv2.COLOR_BGR2GRAY)
                     cropped_image = cropped_image.flatten()
-
+                elif clasification_type == 'RGB_LDA_BAYES':
+                    cropped_image = np.array(cv2.cvtColor(
+                        cropped_image, cv2.COLOR_BGR2RGB))
+                    cropped_image = cropped_image.flatten()
                 best_match, best_match_value = self.find_best_match(
                     clasificadores_binarios, cropped_image)
 

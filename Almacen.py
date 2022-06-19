@@ -133,20 +133,34 @@ class Warehouse:
             self.apply_hog()
         elif classifier_type == 'GRAY_LDA_BAYES':
             self.apply_gray_vectorization()
+        elif classifier_type == 'RGB_LDA_BAYES':
+            self.apply_rgb_vectorization()
         self.save_validation_set()
         self.apply_lda_bayes()
+
+    def apply_rgb_vectorization(self):
+        print('Convirtiendo las imagenes de entrenamiento en vectores de rgb...')
+        for key in tqdm(self.train_images.keys()):
+            imagenes_señal = self.train_images[key]
+            features_vectors = []
+            for img in imagenes_señal:
+                img = self.detector.resize_img(img)
+                rbg_vector = np.array(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+                rbg_vector = rbg_vector.flatten()
+                features_vectors = features_vectors + [rbg_vector]
+            self.train_images[key] = features_vectors
 
     def apply_gray_vectorization(self):
         print('Convirtiendo las imagenes de entrenamiento en vectores de gris...')
         for key in tqdm(self.train_images.keys()):
             imagenes_señal = self.train_images[key]
-            feature_vector = []
+            features_vectors = []
             for img in imagenes_señal:
                 img = self.detector.resize_img(img)
                 gray_vector = np.array(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY))
                 gray_vector = gray_vector.flatten()
-                feature_vector = feature_vector + [gray_vector]
-            self.train_images[key] = feature_vector
+                features_vectors = features_vectors + [gray_vector]
+            self.train_images[key] = features_vectors
 
     def apply_lda_bayes(self):
         print('Aplicando reduccion de dimensionalidad a las imagenes de entrenamiento con el algoritmo LDA y generando Clasificadores binarios ...')
@@ -192,11 +206,11 @@ class Warehouse:
         print('Aplicando el algoritmo HOG a las imagenes de entrenamiento...')
         for key in tqdm(self.train_images.keys()):
             imagenes_señal = self.train_images[key]
-            feature_vector = []
+            features_vectors = []
             for img in imagenes_señal:
                 hog_result = self.detector.hog(img)
-                feature_vector = feature_vector + [hog_result]
-            self.train_images[key] = feature_vector
+                features_vectors = features_vectors + [hog_result]
+            self.train_images[key] = features_vectors
 
     def load_test_images(self, path):
         '''

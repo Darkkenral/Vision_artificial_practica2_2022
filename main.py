@@ -51,4 +51,4 @@ if __name__ == "__main__":
     d.evaluate_classifier(wh.validation_set, wh.clasificadores_binarios)
 
 
-# python3 main.py --train_path="train_jpg" --test_path="test_alumnos_jpg" --classifier="HOG_LDA_BAYES"
+# python3 main.py --train_path="train_jpg" --test_path="test_alumnos_jpg" --classifier="GRAY_LDA_BAYES"
