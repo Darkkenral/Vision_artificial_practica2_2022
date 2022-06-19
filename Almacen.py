@@ -11,6 +11,7 @@ from tqdm import tqdm
 from Algoritmos import *
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
 
+
 default_mask_dimension = (32, 32)
 
 
@@ -112,13 +113,25 @@ class Warehouse:
         self.train_images[SignalType.NO_SEÑAL] = incorrect_data
 
     def filter_trash_regions(self, incorrect_data, filename, img, trash_regions):
-
+        '''
+        Filtra las regiones de interes que no sean de señal
+        Parameters
+        ----------
+        incorrect_data : list
+            _description_
+        filename : string
+            _description_
+        img : Image
+            _description_
+        trash_regions : list
+            _description_
+        '''
         if filename in self.train_images_info:
             signal_regions = self.train_images_info[filename]
             for trash_region in trash_regions:
                 condition = True
                 for signal_region in signal_regions:
-                    if(self.detector.get_IoU(trash_region, signal_region) > 0.0):
+                    if(self.detector.get_IoU(trash_region, signal_region) > 0.1):
                         condition = False
                 if condition:
                     incorrect_data.append(
@@ -129,16 +142,45 @@ class Warehouse:
                     img[trash_region[1]:trash_region[1]+trash_region[3], trash_region[0]:trash_region[0]+trash_region[2]])
 
     def data_treatment_LDA_BAYES(self, classifier_type):
+        '''
+
+        Realiza el tratamiento de los datos para el entrenamiento de los clasificadores binarios y su entrenamiento
+
+        Parameters
+        ----------
+        classifier_type : string
+            tipo de clasificador a utilizar
+        '''
+
         if classifier_type == 'HOG_LDA_BAYES':
             self.apply_hog()
         elif classifier_type == 'GRAY_LDA_BAYES':
             self.apply_gray_vectorization()
         elif classifier_type == 'RGB_LDA_BAYES':
             self.apply_rgb_vectorization()
+        elif classifier_type == 'CANY_LDA_BAYES':
+            self.apply_cany()
         self.save_validation_set()
         self.apply_lda_bayes()
 
+    def apply_cany(self):
+        '''
+        Aplica la transformacion de canny a todas las imagenes de entrenamiento
+        '''
+        print('Convirtiendo las imagenes de entrenamiento vectores de caracteristicas de bordes ...')
+        for key in tqdm(self.train_images.keys()):
+            imagenes_señal = self.train_images[key]
+            features_vectors = []
+            for img in imagenes_señal:
+                img = self.detector.resize_img(img)
+                cany_vector = np.array(cv2.Canny(img, 100, 200)).flatten()
+                features_vectors = features_vectors + [cany_vector]
+            self.train_images[key] = features_vectors
+
     def apply_rgb_vectorization(self):
+        '''
+        Aplica la transformacion de vectorizacion de caracteristicas de color a todas las imagenes de entrenamiento
+        '''
         print('Convirtiendo las imagenes de entrenamiento en vectores de rgb...')
         for key in tqdm(self.train_images.keys()):
             imagenes_señal = self.train_images[key]
@@ -151,6 +193,10 @@ class Warehouse:
             self.train_images[key] = features_vectors
 
     def apply_gray_vectorization(self):
+        '''
+        Aplica la transformacion de vectorizacion de caracteristicas de color a todas las imagenes de entrenamiento
+
+        '''
         print('Convirtiendo las imagenes de entrenamiento en vectores de gris...')
         for key in tqdm(self.train_images.keys()):
             imagenes_señal = self.train_images[key]
@@ -163,23 +209,9 @@ class Warehouse:
             self.train_images[key] = features_vectors
 
     def apply_lda_bayes(self):
-        print('Aplicando reduccion de dimensionalidad a las imagenes de entrenamiento con el algoritmo LDA y generando Clasificadores binarios ...')
-        no_signal_data = self.train_images[SignalType.NO_SEÑAL]
-        del self.train_images[SignalType.NO_SEÑAL]
-        for key in tqdm(self.train_images.keys()):
-            lda = LinearDiscriminantAnalysis()
-            signal_data = self.train_images[key]
-            signal_data = signal_data+no_signal_data
-            signal_data = np.array(signal_data, dtype=np.float32)
-            aux = np.zeros(len(no_signal_data), dtype=np.int16)
-            labels = np.ones(
-                len(self.train_images[key]), dtype=np.int16)
-            labels = labels*key.value
-            labels = np.append(labels, aux)
-            labels = labels.astype(np.float32)
-            self.clasificadores_binarios[key] = lda.fit(signal_data, labels)
-
-    def apply_lda_bayes(self):
+        '''
+        Aplica la transformacion de LDA las imagenes y genera el clasificador bayesiano para cada una de las señales
+        '''
         print('Aplicando reduccion de dimensionalidad a las imagenes de entrenamiento con el algoritmo LDA y generando Clasificadores binarios ...')
         no_signal_data = self.train_images[SignalType.NO_SEÑAL]
         del self.train_images[SignalType.NO_SEÑAL]
@@ -197,12 +229,18 @@ class Warehouse:
             self.clasificadores_binarios[key] = lda.fit(signal_data, labels)
 
     def save_validation_set(self):
+        '''
+        Guarda el conjunto de validacion en un diccionario para la posterior evaluacion
+        '''
         print('Almacenando subconjunto de datos de validacion...')
         for key in tqdm(self.train_images.keys()):
             self.validation_set[key] = self.train_images[key][int(
                 len(self.train_images[key]) * 0.1):]
 
     def apply_hog(self):
+        '''
+        Aplica la transformacion de HOG a todas las imagenes de entrenamiento
+        '''
         print('Aplicando el algoritmo HOG a las imagenes de entrenamiento...')
         for key in tqdm(self.train_images.keys()):
             imagenes_señal = self.train_images[key]

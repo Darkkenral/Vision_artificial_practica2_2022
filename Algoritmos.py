@@ -12,6 +12,7 @@ from sklearn.metrics import f1_score
 from sklearn.metrics import ConfusionMatrixDisplay
 from sklearn.metrics import RocCurveDisplay
 from sklearn.metrics import PrecisionRecallDisplay
+from skimage.feature import haar_like_feature_coord
 import pandas as pd
 import os
 
@@ -376,6 +377,21 @@ class Detector:
         return biggest_region
 
     def print_rectangles(self, image, save_regions):
+        '''
+        Imprime los rectángulos en la imagen
+
+        Parameters
+        ----------
+        image : Imagen
+            Imagen en la que se imprimirán los rectángulos
+        save_regions : list
+            Lista de rectángulos
+
+        Returns
+        -------
+        Imagen
+            Imagen con los rectángulos impresos
+        '''
         for region, info in save_regions:
             x, y, w, h = region
             image = cv2.rectangle(
@@ -385,7 +401,18 @@ class Detector:
         return image
 
     def hog(self, image):
+        '''
+        Aplica el algoritmo HOG a una imagen
+        Parameters
+        ----------
+        image : Imagen
+            Imagen a la que se le aplicará el algoritmo HOG
 
+        Returns
+        -------
+        list
+            vector de características HOG
+        '''
         image = self.resize_img(image)
         # Parametros HOG
         winSize = (32, 32)
@@ -409,6 +436,23 @@ class Detector:
         return feature_vector
 
     def multi_class_classifier_LDA_BAYES(self, test_images, clasificadores_binarios, clasification_type):
+        '''
+        Clasifica una lista de imagenes con un clasificador LDA-BAYES
+        Parameters
+        ----------
+        test_images : list
+            Lista de imagenes a clasificar
+        clasificadores_binarios : list
+            Lista de clasificadores binarios
+        clasification_type : str
+            Tipo de clasificación
+
+        Returns
+        -------
+        list
+            Lista de clasificaciones
+        '''
+
         tests_images_classified = {}
         print('Aplicando clasificador multiclase...')
         for image in tqdm(test_images.keys()):
@@ -426,6 +470,25 @@ class Detector:
         return tests_images_classified
 
     def clasificador_regiones(self, clasificadores_binarios, image_copy, regions, clasification_type):
+        '''
+        Dada una imagen y una lista de regiones, clasifica cada region con un clasificador binario y devuelve una lista de clasificaciones
+
+        Parameters
+        ----------
+        clasificadores_binarios : list
+            Lista de clasificadores binarios
+        image_copy : Imagen
+            Imagen a la que se le aplicará el clasificador
+        regions : list
+            Lista de rectángulos
+        clasification_type : str
+            clasificadores binarios a usar
+
+        Returns
+        -------
+        list
+            Lista de clasificaciones, regiones,tipo y score
+        '''
         classified_regions = []
         for region in regions:
             x, y, w, h = region
@@ -442,6 +505,11 @@ class Detector:
                     cropped_image = np.array(cv2.cvtColor(
                         cropped_image, cv2.COLOR_BGR2RGB))
                     cropped_image = cropped_image.flatten()
+                elif clasification_type == 'CANY_LDA_BAYES':
+                    cropped_image = np.array(cv2.Canny(
+                        cropped_image, 100, 200))
+                    cropped_image = cropped_image.flatten()
+
                 best_match, best_match_value = self.find_best_match(
                     clasificadores_binarios, cropped_image)
 
@@ -452,6 +520,21 @@ class Detector:
         return classified_regions
 
     def find_best_match(self, clasificadores_binarios, feature_vector):
+        '''
+        Dada una diccionario de clasificadores binarios y un vector de características, devuelve el clasificador binario con el mejor score
+
+        Parameters
+        ----------
+        clasificadores_binarios : list
+            Diccionario de clasificadores binarios
+        feature_vector : list
+            Vector de características
+
+        Returns
+        -------
+        tuple
+            Tipo de señal y score de la classificación
+        '''
         best_match = None
         best_match_value = 0.0
         for key in clasificadores_binarios.keys():
@@ -465,6 +548,16 @@ class Detector:
         return best_match, best_match_value
 
     def evaluate_classifier(self, validation_set, clasificadores_binarios):
+        '''
+        Evalua un clasificador binario con un conjunto de validación
+
+        Parameters
+        ----------
+        validation_set : dict
+            Conjunto de validación
+        clasificadores_binarios : list
+            Lista de clasificadores binarios
+        '''
         print('Evaluando clasificador...')
         for _ in tqdm(range(1)):
             # create a folder called "Evaluation" to save the results
@@ -484,6 +577,18 @@ class Detector:
                 validation_set, y_true, y_pred)
 
     def get_roc_curve(self, validation_set, y_true, y_pred):
+        '''
+        Genera una curva ROC para un clasificador binario
+
+        Parameters
+        ----------
+        validation_set : dict
+            Conjunto de validación
+        y_true : list
+            Lista de clasificaciones verdaderas
+        y_pred : list
+            Lista de clasificaciones predichas
+        '''
         for key in validation_set:
             if key is not SignalType.NO_SEÑAL:
                 RocCurveDisplay.from_predictions(
@@ -492,6 +597,15 @@ class Detector:
                 plt.close()
 
     def get_statics_table(self, y_true, y_pred):
+        '''
+        Genera una tabla con datos estadisticos para un clasificador binario
+        Parameters
+        ----------
+        y_true : list
+            Lista de clasificaciones verdaderas
+        y_pred : list
+            Lista de clasificaciones predichas
+        '''
         accuracy_score_value = accuracy_score(
             y_true, y_pred, normalize=True)
         precision_score_value = precision_score(
@@ -511,12 +625,37 @@ class Detector:
         plt.close()
 
     def get_confussion_matrix(self, y_true, y_pred):
+        '''
+        Genera una matriz de confusión para un clasificador binario
+
+        Parameters
+        ----------
+        y_true : list
+            Lista de clasificaciones verdaderas
+        y_pred : list   
+            Lista de clasificaciones predichas
+        '''
         ConfusionMatrixDisplay.from_predictions(y_true, y_pred)
         plt.title('Matriz de confusión')
         plt.savefig('Evaluation/matriz_confusion.png')
         plt.close()
 
     def generate_y_pred(self, validation_set, clasificadores_binarios):
+        '''
+        Genera una lista de clasificaciones predichas para una lista de clasificadores binarios a partir de un conjunto de validación
+
+        Parameters
+        ----------
+        validation_set : dict
+            Conjunto de validación
+        clasificadores_binarios :   list
+            Lista de clasificadores binarios
+
+        Returns
+        -------
+        list
+            Lista de clasificaciones predichas
+        '''
         y_pred = []
         for key in validation_set.keys():
             for element in validation_set[key]:
@@ -531,6 +670,18 @@ class Detector:
         return y_pred
 
     def generate_y_true(self, validation_set):
+        '''
+        Genera una lista de clasificaciones verdaderas para un conjunto de validación
+
+        Parameters
+        ----------
+        validation_set : dict
+            Conjunto de validación  
+        Returns
+        -------
+        list
+            Lista de clasificaciones verdaderas
+        '''
         y_true = []
         for key in validation_set.keys():
             for _ in validation_set[key]:
