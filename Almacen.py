@@ -1,4 +1,4 @@
-
+################################################### IMPORTS ###################################################################
 import os
 from cupshelpers import Printer
 import cv2
@@ -10,9 +10,10 @@ from Image import SignalType
 from tqdm import tqdm
 from Algoritmos import *
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
-
-
+#############################################################################################################################
+############################################# VARIABLES_GLOBALES ##############################################################
 default_mask_dimension = (32, 32)
+#############################################################################################################################
 
 
 class Warehouse:
@@ -26,6 +27,42 @@ class Warehouse:
         self.test_images = {}
         self.validation_set = {}
         self.detector = Detector()
+
+############################################CARGA DE DATOS DE ENTRENAMIENTO###################################################
+
+####################### METODO PRINCIPAL #######################################################################################
+    def load_train_images(self, path):
+        '''
+        Lee el archvio gt.txt, extrae de cada imagen las regiones de interes,clasifica cada señal de cada region y  las almacena en el diccionario train_images_info
+        Parameters
+        ----------
+        path : string
+            ruta en la que se encuentra el archivo gt.txt
+
+        Raises
+        ------
+        Exception
+            En caso de que el directorio proporcionado no exista
+        '''
+        if not os.path.isdir(path):
+            raise Exception(
+                f'File {path + "/gt.txt"} No se ha encontrado el fichero gt.txt!')
+        print('Cargando datos de entrenamiento...')
+        gt_file = path + '/gt.txt'
+        num_lines = 0
+        with open(gt_file) as f:
+            for _ in f:
+                num_lines += 1
+        with open(gt_file, 'r') as f:
+            for i, line in enumerate(tqdm(f, total=num_lines)):
+                image_info = self.line_to_img(line, path)
+                if image_info[0] in self.train_images_info:
+                    self.train_images_info[image_info[0]].append(image_info[1])
+                else:
+                    self.train_images_info[image_info[0]] = [image_info[1]]
+
+        self.generate_incorrect_data(path)
+####################### METODOS AUXILIARES #####################################################################################
 
     def line_to_img(self, line: str, path):
         '''
@@ -58,38 +95,6 @@ class Warehouse:
             self.train_images[signal_type].append(
                 crop_image)
         return name, rectangle
-
-    def load_train_images(self, path):
-        '''
-        Lee el archvio gt.txt, extrae de cada imagen las regiones de interes,clasifica cada señal de cada region y  las almacena en el diccionario train_images_info
-        Parameters
-        ----------
-        path : string
-            ruta en la que se encuentra el archivo gt.txt
-
-        Raises
-        ------
-        Exception
-            En caso de que el directorio proporcionado no exista
-        '''
-        if not os.path.isdir(path):
-            raise Exception(
-                f'File {path + "/gt.txt"} No se ha encontrado el fichero gt.txt!')
-        print('Cargando datos de entrenamiento...')
-        gt_file = path + '/gt.txt'
-        num_lines = 0
-        with open(gt_file) as f:
-            for _ in f:
-                num_lines += 1
-        with open(gt_file, 'r') as f:
-            for i, line in enumerate(tqdm(f, total=num_lines)):
-                image_info = self.line_to_img(line, path)
-                if image_info[0] in self.train_images_info:
-                    self.train_images_info[image_info[0]].append(image_info[1])
-                else:
-                    self.train_images_info[image_info[0]] = [image_info[1]]
-
-        self.generate_incorrect_data(path)
 
     def generate_incorrect_data(self, path):
         '''
@@ -140,7 +145,55 @@ class Warehouse:
             for trash_region in trash_regions:
                 incorrect_data.append(
                     img[trash_region[1]:trash_region[1]+trash_region[3], trash_region[0]:trash_region[0]+trash_region[2]])
+###############################################################################################################################
 
+#################################################### CARGA DE DATOS DE TEST ######################################################
+    def load_test_images(self, path):
+        '''
+        Lee todas las imagenes del directorio test y las almacena en el diccionario test_images
+        '''
+        print('Cargando imagenes de prueba...')
+        for filename in tqdm(os.listdir(path)):
+            if filename.endswith(".jpg"):
+                img = cv2.imread(path+'/' + filename)
+                # delete the extension of the image
+                name = filename.split('.')[0]
+                self.test_images[name] = img
+###############################################################################################################################
+
+#################################################### GUARDADO DE DATOS  ######################################################
+
+####################### METODO PRINCIPAL #######################################################################################
+
+    def save_images(self, processed_images: dict):
+        '''
+        Guarda las imagenes procesadas en el directorio resultado_imgs
+        '''
+        self.save_processed_images(processed_images)
+        self.save_images_info(processed_images)
+####################### METODOS AUXILIARES #####################################################################################
+
+    def save_images_info(self, processed_images):
+        print('Guardando informacion de las imagenes procesadas...')
+        if not os.path.exists('resultado.txt'):
+            open('resultado.txt', 'w').close()
+        with open('resultado.txt', 'w') as f:
+            for name, img_data in tqdm(processed_images.items()):
+                for region in img_data[1]:
+                    f.write(
+                        f'{name}.jpg;{region[0][0]};{region[0][1]};{region[0][2]};{region[0][3]};{region[1][0].value};{region[1][1]}\n')
+
+    def save_processed_images(self, processed_images):
+        print('Guardando imagenes procesadas...')
+        if not os.path.exists('./resultado_imgs'):
+            os.makedirs('./resultado_imgs')
+        for name, img_data in tqdm(processed_images.items()):
+            cv2.imwrite(f'./resultado_imgs/{name}.jpg', img_data[0])
+###############################################################################################################################
+
+#################################################### TRATAMIENTO DE DATOS LDA BAYESIANO #########################################
+
+####################### METODO PRINCIPAL #######################################################################################
     def data_treatment_LDA_BAYES(self, classifier_type):
         '''
 
@@ -162,6 +215,7 @@ class Warehouse:
             self.apply_cany()
         self.save_validation_set()
         self.apply_lda_bayes()
+####################### METODOS AUXILIARES #####################################################################################
 
     def apply_cany(self):
         '''
@@ -249,33 +303,4 @@ class Warehouse:
                 hog_result = self.detector.hog(img)
                 features_vectors = features_vectors + [hog_result]
             self.train_images[key] = features_vectors
-
-    def load_test_images(self, path):
-        '''
-        Lee todas las imagenes del directorio test y las almacena en el diccionario test_images
-        '''
-        print('Cargando imagenes de prueba...')
-        for filename in tqdm(os.listdir(path)):
-            if filename.endswith(".jpg"):
-                img = cv2.imread(path+'/' + filename)
-                # delete the extension of the image
-                name = filename.split('.')[0]
-                self.test_images[name] = img
-
-    def save_images(self, processed_images: dict):
-        '''
-        Guarda las imagenes procesadas en el directorio resultado_imgs
-        '''
-        print('Guardando imagenes procesadas...')
-        if not os.path.exists('./resultado_imgs'):
-            os.makedirs('./resultado_imgs')
-        for name, img_data in tqdm(processed_images.items()):
-            cv2.imwrite(f'./resultado_imgs/{name}.jpg', img_data[0])
-        print('Guardando informacion de las imagenes procesadas...')
-        if not os.path.exists('resultado.txt'):
-            open('resultado.txt', 'w').close()
-        with open('resultado.txt', 'w') as f:
-            for name, img_data in tqdm(processed_images.items()):
-                for region in img_data[1]:
-                    f.write(
-                        f'{name}.jpg;{region[0][0]};{region[0][1]};{region[0][2]};{region[0][3]};{region[1][0].value};{region[1][1]}\n')
+###############################################################################################################################

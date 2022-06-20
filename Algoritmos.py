@@ -1,4 +1,4 @@
-
+################################################### IMPORTS ###################################################################
 from cv2 import cvtColor
 from more_itertools import sample
 import numpy as np
@@ -17,12 +17,15 @@ import pandas as pd
 import os
 
 from Image import SignalType
+#############################################################################################################################
 
+############################################# VARIABLES_GLOBALES ##############################################################
 default_mask_dimension = (32, 32)
 delta = 12
 max_variation = 0.75
 min_area = 75
 max_area = 2250
+#############################################################################################################################
 
 
 class Detector:
@@ -33,23 +36,56 @@ class Detector:
         self.mser_rb = cv2.MSER_create(delta=2, min_area=75,
                                        max_area=22500, max_variation=0.75)
 
-    def resize_img(self, image):
+################################################### METODOS DE DETECCION ###################################################################
+####################### METODOS PRINCIPALES #######################################################################################
+    def ligth_detect_regions(self, image):
         '''
-        Redimensiona una imagen a la variable global
+        Detecta las regiones de interes de una imagen aplicando el algoritmo MSER
 
         Parameters
         ----------
         image : Imagen
-            Imagen a redimensionar
+            Imagen a la que se le aplicará el algoritmo MSER
 
-        Returns
+        Returnsimage.shape
         -------
-        Imagen
-            Imagen redimensionada
+        list
+            Lista de regiones de interes
         '''
-        return cv2.resize(image, default_mask_dimension, interpolation=cv2.INTER_AREA)
+        enchance_image = self.enhance_blue_red(image)
+        msers, bboxes = self.mser_rb.detectRegions(enchance_image)
+        bboxes = self.filter_squares(bboxes, 0.15)
+        bboxes = self.amplify_area(bboxes, 0.12, image.shape)
+        bboxes = self.filter_overlapping_squares(bboxes, 0.5)
+        bboxes = list(set(bboxes))
+        return bboxes
 
-    # MSER functions
+    def complete_detect_regions(self, image):
+        '''
+        Detecta las regiones de interes de una imagen aplicando el algoritmo MSER
+
+        Parameters
+        ----------
+        image : Imagen
+            Imagen a la que se le aplicará el algoritmo MSER
+
+        Returnsimage.shape
+        -------
+        list
+            Lista de regiones de interes
+        '''
+        enchance_image = cvtColor(image, cv2.COLOR_BGR2GRAY)
+        enchance_image = cv2.equalizeHist(enchance_image)
+        msers, bboxes = self.mser.detectRegions(enchance_image)
+        enchance_image = self.enhance_blue_red(image)
+        msers, secondbboxes = self.mser_rb.detectRegions(enchance_image)
+        bboxes = np.append(bboxes, secondbboxes, axis=0)
+        bboxes = self.filter_squares(bboxes, 0.15)
+        bboxes = self.amplify_area(bboxes, 0.12, image.shape)
+        bboxes = self.filter_overlapping_squares(bboxes, 0.5)
+        bboxes = list(set(bboxes))
+        return bboxes
+####################### METODOS AUXILIARES #####################################################################################
 
     def filter_squares(self, rects, variation):
         '''
@@ -267,54 +303,6 @@ class Detector:
 
         return return_list
 
-    def ligth_detect_regions(self, image):
-        '''
-        Detecta las regiones de interes de una imagen aplicando el algoritmo MSER
-
-        Parameters
-        ----------
-        image : Imagen
-            Imagen a la que se le aplicará el algoritmo MSER
-
-        Returnsimage.shape
-        -------
-        list
-            Lista de regiones de interes
-        '''
-        enchance_image = self.enhance_blue_red(image)
-        msers, bboxes = self.mser_rb.detectRegions(enchance_image)
-        bboxes = self.filter_squares(bboxes, 0.15)
-        bboxes = self.amplify_area(bboxes, 0.12, image.shape)
-        bboxes = self.filter_overlapping_squares(bboxes, 0.5)
-        bboxes = list(set(bboxes))
-        return bboxes
-
-    def complete_detect_regions(self, image):
-        '''
-        Detecta las regiones de interes de una imagen aplicando el algoritmo MSER
-
-        Parameters
-        ----------
-        image : Imagen
-            Imagen a la que se le aplicará el algoritmo MSER
-
-        Returnsimage.shape
-        -------
-        list
-            Lista de regiones de interes
-        '''
-        enchance_image = cvtColor(image, cv2.COLOR_BGR2GRAY)
-        enchance_image = cv2.equalizeHist(enchance_image)
-        msers, bboxes = self.mser.detectRegions(enchance_image)
-        enchance_image = self.enhance_blue_red(image)
-        msers, secondbboxes = self.mser_rb.detectRegions(enchance_image)
-        bboxes = np.append(bboxes, secondbboxes, axis=0)
-        bboxes = self.filter_squares(bboxes, 0.15)
-        bboxes = self.amplify_area(bboxes, 0.12, image.shape)
-        bboxes = self.filter_overlapping_squares(bboxes, 0.5)
-        bboxes = list(set(bboxes))
-        return bboxes
-
     def filter_overlapping_squares(self, bboxes, threshold):
         '''
         Filtra los rectángulos de una lista de rectángulos
@@ -340,65 +328,6 @@ class Detector:
                         if region2 in copy_list:
                             copy_list.remove(region2)
         return copy_list
-
-    def equal_region(self, region1, region2):
-        '''
-        Compara dos regiones de interes
-
-        Parameters
-        ----------
-        region1 : bunding box
-            Primera region de interes
-        region2 : bunding box
-            Segunda region de interes
-        '''
-        x1, y1, w1, h1 = region1
-        x2, y2, w2, h2 = region2
-        return (x1 == x2) and (y1 == y2) and (w1 == w2) and (h1 == h2)
-
-    def get_biggest(self, regions):
-        '''
-        Obtiene el rectángulo con mayor área de una lista de rectángulos
-
-        Parameters
-        ----------
-        regions : list
-            Lista de rectángulos
-
-        Returns
-        -------
-        bunding box
-            Rectángulo con mayor área
-        '''
-        biggest_region = regions[0]
-        for region in regions:
-            if region[2] * region[3] > biggest_region[2] * biggest_region[3]:
-                biggest_region = region
-        return biggest_region
-
-    def print_rectangles(self, image, save_regions):
-        '''
-        Imprime los rectángulos en la imagen
-
-        Parameters
-        ----------
-        image : Imagen
-            Imagen en la que se imprimirán los rectángulos
-        save_regions : list
-            Lista de rectángulos
-
-        Returns
-        -------
-        Imagen
-            Imagen con los rectángulos impresos
-        '''
-        for region, info in save_regions:
-            x, y, w, h = region
-            image = cv2.rectangle(
-                image, (x, y), (x + w, y + h), (0, 255, 0), 2)
-            image = cv2.putText(
-                image, info[0].name+""+str(info[1]), (x, y), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-        return image
 
     def hog(self, image):
         '''
@@ -434,6 +363,7 @@ class Detector:
         # print the dtype of the feature vector
         feature_vector = list(feature_vector)
         return feature_vector
+############################################ CLASIFICADOR LDA BAYES #############################################################
 
     def multi_class_classifier_LDA_BAYES(self, test_images, clasificadores_binarios, clasification_type):
         '''
@@ -547,6 +477,9 @@ class Detector:
                 best_match_value = probability
         return best_match, best_match_value
 
+############################################ EVALUACION DE LOS CLASIFICADORES ###################################################
+
+####################### METODO PRINCIPAL #######################################################################################
     def evaluate_classifier(self, validation_set, clasificadores_binarios):
         '''
         Evalua un clasificador binario con un conjunto de validación
@@ -575,6 +508,7 @@ class Detector:
 
             self.get_roc_curve(
                 validation_set, y_true, y_pred)
+####################### METODOS AUXILIARES #####################################################################################
 
     def get_roc_curve(self, validation_set, y_true, y_pred):
         '''
@@ -687,3 +621,80 @@ class Detector:
             for _ in validation_set[key]:
                 y_true.append(key.value)
         return y_true
+###############################################################################################################################
+################################### METODOS DE CARACTER GENERAL #################################################################
+
+    def resize_img(self, image):
+        '''
+        Redimensiona una imagen a la variable global
+
+        Parameters
+        ----------
+        image : Imagen
+            Imagen a redimensionar
+
+        Returns
+        -------
+        Imagen
+            Imagen redimensionada
+        '''
+        return cv2.resize(image, default_mask_dimension, interpolation=cv2.INTER_AREA)
+
+    def equal_region(self, region1, region2):
+        '''
+        Compara dos regiones de interes
+
+        Parameters
+        ----------
+        region1 : bunding box
+            Primera region de interes
+        region2 : bunding box
+            Segunda region de interes
+        '''
+        x1, y1, w1, h1 = region1
+        x2, y2, w2, h2 = region2
+        return (x1 == x2) and (y1 == y2) and (w1 == w2) and (h1 == h2)
+
+    def get_biggest(self, regions):
+        '''
+        Obtiene el rectángulo con mayor área de una lista de rectángulos
+
+        Parameters
+        ----------
+        regions : list
+            Lista de rectángulos
+
+        Returns
+        -------
+        bunding box
+            Rectángulo con mayor área
+        '''
+        biggest_region = regions[0]
+        for region in regions:
+            if region[2] * region[3] > biggest_region[2] * biggest_region[3]:
+                biggest_region = region
+        return biggest_region
+
+    def print_rectangles(self, image, save_regions):
+        '''
+        Imprime los rectángulos en la imagen
+
+        Parameters
+        ----------
+        image : Imagen
+            Imagen en la que se imprimirán los rectángulos
+        save_regions : list
+            Lista de rectángulos
+
+        Returns
+        -------
+        Imagen
+            Imagen con los rectángulos impresos
+        '''
+        for region, info in save_regions:
+            x, y, w, h = region
+            image = cv2.rectangle(
+                image, (x, y), (x + w, y + h), (0, 255, 0), 2)
+            image = cv2.putText(
+                image, info[0].name+""+str(info[1]), (x, y), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+        return image
