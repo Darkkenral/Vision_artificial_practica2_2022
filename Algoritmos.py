@@ -1,6 +1,5 @@
 ################################################### IMPORTS ###################################################################
 from cv2 import cvtColor
-from more_itertools import sample
 import numpy as np
 from tqdm import tqdm
 import cv2
@@ -11,12 +10,9 @@ from sklearn.metrics import precision_score
 from sklearn.metrics import f1_score
 from sklearn.metrics import ConfusionMatrixDisplay
 from sklearn.metrics import RocCurveDisplay
-from sklearn.metrics import PrecisionRecallDisplay
-from skimage.feature import haar_like_feature_coord
 import pandas as pd
 import os
-
-from Image import SignalType
+from Image import SignalType, return_type
 #############################################################################################################################
 
 ############################################# VARIABLES_GLOBALES ##############################################################
@@ -365,7 +361,7 @@ class Detector:
         return feature_vector
 ############################################ CLASIFICADOR LDA BAYES #############################################################
 
-    def multi_class_classifier_LDA_BAYES(self, test_images, clasificadores_binarios, clasification_type):
+    def multiclass_classifier(self, test_images, clasificadores_binarios, knn, pca, clasification_type):
         '''
         Clasifica una lista de imagenes con un clasificador LDA-BAYES
         Parameters
@@ -387,19 +383,17 @@ class Detector:
         print('Aplicando clasificador multiclase...')
         for image in tqdm(test_images.keys()):
             image_copy = test_images[image]
-            # regions = self.complete_detect_regions(image_copy)
+            #regions = self.complete_detect_regions(image_copy)
             regions = self.ligth_detect_regions(image_copy)
-
             classified_regions = self.clasificador_regiones(
-                clasificadores_binarios, image_copy, regions, clasification_type)
-
+                clasificadores_binarios, knn, pca, image_copy, regions, clasification_type)
             printed_image = self.print_rectangles(
                 image_copy, classified_regions)
             tests_images_classified[image] = (
                 printed_image, classified_regions)
         return tests_images_classified
 
-    def clasificador_regiones(self, clasificadores_binarios, image_copy, regions, clasification_type):
+    def clasificador_regiones(self, clasificadores_binarios, knn, pca, image_copy, regions, clasification_type):
         '''
         Dada una imagen y una lista de regiones, clasifica cada region con un clasificador binario y devuelve una lista de clasificaciones
 
@@ -425,31 +419,72 @@ class Detector:
             cropped_image = image_copy[y:y+h, x:x+w]
             if cropped_image.shape[0] != 0 and cropped_image.shape[1] != 0:
                 cropped_image = self.resize_img(cropped_image)
-                if clasification_type == 'HOG_LDA_BAYES':
-                    cropped_image = self.hog(cropped_image)
-                elif clasification_type == 'GRAY_LDA_BAYES':
-                    cropped_image = cv2.cvtColor(
-                        cropped_image, cv2.COLOR_BGR2GRAY)
-                    cropped_image = cropped_image.flatten()
-                elif clasification_type == 'RGB_LDA_BAYES':
-                    cropped_image = np.array(cv2.cvtColor(
-                        cropped_image, cv2.COLOR_BGR2RGB))
-                    cropped_image = cropped_image.flatten()
-                elif clasification_type == 'CANY_LDA_BAYES':
-                    cropped_image = np.array(cv2.Canny(
-                        cropped_image, 100, 200))
-                    cropped_image = cropped_image.flatten()
-
-                best_match, best_match_value = self.find_best_match(
-                    clasificadores_binarios, cropped_image)
-
+                cropped_image = self.select_preprocesing(
+                    clasification_type, cropped_image)
+                if clasification_type[2] == "BAYES":
+                    best_match, best_match_value = self.find_best_match_BAYES(
+                        clasificadores_binarios, cropped_image)
+                if clasification_type[2] == "KNN":
+                    cropped_image = pca.transform([cropped_image])
+                    best_match, best_match_value = self.find_best_match_KNN(
+                        knn, cropped_image)
                 if (best_match is not None) and (best_match_value > 0.5):
-                    classified_regions.append(
-                        (region, (best_match, best_match_value)))
+                    if clasification_type[2] == "KNN":
+                        if best_match != SignalType.NO_SEÑAL:
+                            classified_regions.append(
+                                (region, (best_match, best_match_value)))
+                    else:
+                        classified_regions.append(
+                            (region, (best_match, best_match_value)))
 
         return classified_regions
 
-    def find_best_match(self, clasificadores_binarios, feature_vector):
+    def select_preprocesing(self, clasification_type, cropped_image):
+        if clasification_type[0] == 'HOG':
+            cropped_image = self.hog(cropped_image)
+
+        elif clasification_type[0] == 'GRAY':
+            cropped_image = cv2.cvtColor(
+                cropped_image, cv2.COLOR_BGR2GRAY)
+            cropped_image = cropped_image.flatten()
+        elif clasification_type[0] == 'RGB':
+            cropped_image = np.array(cv2.cvtColor(
+                cropped_image, cv2.COLOR_BGR2RGB))
+            cropped_image = cropped_image.flatten()
+        elif clasification_type[0] == 'CANY':
+            cropped_image = np.array(cv2.Canny(
+                cropped_image, 100, 200))
+            cropped_image = cropped_image.flatten()
+        return cropped_image
+
+    def find_best_match_KNN(self, knn, feature_vector):
+        '''
+        Dada una diccionario de clasificadores binarios y un vector de características, devuelve el clasificador binario con el mejor score
+
+        Parameters
+        ----------
+        clasificadores_binarios : list
+            Diccionario de clasificadores binarios
+        feature_vector : list
+            Vector de características
+
+        Returns
+        -------
+        tuple
+            Tipo de señal y score de la classificación
+        '''
+
+        probability = knn.predict_proba(
+            feature_vector)[0]
+        best_match = np.argmax(probability)
+        best_match_value = probability[best_match]
+        if best_match == 0:
+            best_match = SignalType.NO_SEÑAL
+        else:
+            best_match = return_type(best_match)
+        return best_match, best_match_value
+
+    def find_best_match_BAYES(self, clasificadores_binarios, feature_vector):
         '''
         Dada una diccionario de clasificadores binarios y un vector de características, devuelve el clasificador binario con el mejor score
 
@@ -476,11 +511,13 @@ class Detector:
                 best_match = key
                 best_match_value = probability
         return best_match, best_match_value
+##########################################################################################################333###################
 
 ############################################ EVALUACION DE LOS CLASIFICADORES ###################################################
 
 ####################### METODO PRINCIPAL #######################################################################################
-    def evaluate_classifier(self, validation_set, clasificadores_binarios):
+
+    def evaluate_classifier(self, validation_set, clasificadores_binarios, knn, pca, classifier_type):
         '''
         Evalua un clasificador binario con un conjunto de validación
 
@@ -500,7 +537,7 @@ class Detector:
             # generacion de datos de validacion
             y_true = self.generate_y_true(validation_set)
             y_pred = self.generate_y_pred(
-                validation_set, clasificadores_binarios)
+                validation_set, clasificadores_binarios, knn, pca, classifier_type)
             # creacion de la matriz de confusion
             self.get_confussion_matrix(y_true, y_pred)
             # generacion de tabla con datos estadisticos
@@ -566,7 +603,7 @@ class Detector:
         ----------
         y_true : list
             Lista de clasificaciones verdaderas
-        y_pred : list   
+        y_pred : list
             Lista de clasificaciones predichas
         '''
         ConfusionMatrixDisplay.from_predictions(y_true, y_pred)
@@ -574,7 +611,7 @@ class Detector:
         plt.savefig('Evaluation/matriz_confusion.png')
         plt.close()
 
-    def generate_y_pred(self, validation_set, clasificadores_binarios):
+    def generate_y_pred(self, validation_set, clasificadores_binarios, knn, pca, classifier_type):
         '''
         Genera una lista de clasificaciones predichas para una lista de clasificadores binarios a partir de un conjunto de validación
 
@@ -593,13 +630,19 @@ class Detector:
         y_pred = []
         for key in validation_set.keys():
             for element in validation_set[key]:
-                best_match = 0
-                for clasificador in clasificadores_binarios.keys():
-                    match_class = clasificadores_binarios[clasificador].predict(
-                        [element])[0]
-                    if match_class != 0:
-                        best_match = match_class
-                        break
+                if classifier_type[2] == 'BAYES':
+                    best_match = 0
+                    for clasificador in clasificadores_binarios.keys():
+                        match_class = clasificadores_binarios[clasificador].predict(
+                            [element])[0]
+
+                        if match_class != 0:
+                            best_match = match_class
+                            break
+                else:
+                    element = pca.transform([element])
+                    probability = knn.predict_proba(element)[0]
+                    best_match = np.argmax(probability)
                 y_pred.append(best_match)
         return y_pred
 
@@ -610,7 +653,7 @@ class Detector:
         Parameters
         ----------
         validation_set : dict
-            Conjunto de validación  
+            Conjunto de validación
         Returns
         -------
         list

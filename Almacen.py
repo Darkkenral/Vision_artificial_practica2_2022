@@ -1,15 +1,16 @@
 ################################################### IMPORTS ###################################################################
+
 import os
-from cupshelpers import Printer
 import cv2
-from cv2 import resize
-from matplotlib.pyplot import gray
 import numpy as np
 from Image import return_type
 from Image import SignalType
 from tqdm import tqdm
 from Algoritmos import *
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
+from sklearn.decomposition import PCA
+from sklearn.neighbors import KNeighborsClassifier
+
 #############################################################################################################################
 ############################################# VARIABLES_GLOBALES ##############################################################
 default_mask_dimension = (32, 32)
@@ -27,10 +28,15 @@ class Warehouse:
         self.test_images = {}
         self.validation_set = {}
         self.detector = Detector()
+        self.knn = KNeighborsClassifier()
+        self.pca = PCA(n_components=9)
+
 
 ############################################CARGA DE DATOS DE ENTRENAMIENTO###################################################
 
 ####################### METODO PRINCIPAL #######################################################################################
+
+
     def load_train_images(self, path):
         '''
         Lee el archvio gt.txt, extrae de cada imagen las regiones de interes,clasifica cada señal de cada region y  las almacena en el diccionario train_images_info
@@ -111,7 +117,7 @@ class Warehouse:
         for filename in tqdm(os.listdir(path)):
             if filename.endswith(".jpg"):
                 img = cv2.imread(path+'/' + filename)
-                # trash_regions = self.detector.complete_detect_regions(img)
+                #trash_regions = self.detector.complete_detect_regions(img)
                 trash_regions = self.detector.ligth_detect_regions(img)
                 self.filter_trash_regions(
                     incorrect_data, filename, img, trash_regions)
@@ -180,8 +186,14 @@ class Warehouse:
         with open('resultado.txt', 'w') as f:
             for name, img_data in tqdm(processed_images.items()):
                 for region in img_data[1]:
+                    square = region[0]
+                    info = region[1]
+                    x, y, w, h = square
+                    x2 = x + w
+                    y2 = y + h
                     f.write(
-                        f'{name}.jpg;{region[0][0]};{region[0][1]};{region[0][2]};{region[0][3]};{region[1][0].value};{region[1][1]}\n')
+                        f'{name}.jpg;{x};{y};{x2};{y2};{info[0].value};{info[1]}\n')
+                    # f'{name}.jpg;{region[0][0]};{region[0][1]};{region[0][2]};{region[0][3]};{region[1][0].value};{region[1][1]}\n')
 
     def save_processed_images(self, processed_images):
         print('Guardando imagenes procesadas...')
@@ -194,7 +206,7 @@ class Warehouse:
 #################################################### TRATAMIENTO DE DATOS LDA BAYESIANO #########################################
 
 ####################### METODO PRINCIPAL #######################################################################################
-    def data_treatment_LDA_BAYES(self, classifier_type):
+    def data_treatment(self, classifier_type):
         '''
 
         Realiza el tratamiento de los datos para el entrenamiento de los clasificadores binarios y su entrenamiento
@@ -204,18 +216,25 @@ class Warehouse:
         classifier_type : string
             tipo de clasificador a utilizar
         '''
-
-        if classifier_type == 'HOG_LDA_BAYES':
-            self.apply_hog()
-        elif classifier_type == 'GRAY_LDA_BAYES':
-            self.apply_gray_vectorization()
-        elif classifier_type == 'RGB_LDA_BAYES':
-            self.apply_rgb_vectorization()
-        elif classifier_type == 'CANY_LDA_BAYES':
-            self.apply_cany()
+        self.select_preprocessing_data_treatmet(classifier_type)
         self.save_validation_set()
-        self.apply_lda_bayes()
+        fw, sw, tw = classifier_type
+        if tw == 'BAYES':
+            self.apply_lda_bayes()
+        elif tw == 'KNN':
+            self.apply_pca_knn()
+
 ####################### METODOS AUXILIARES #####################################################################################
+
+    def select_preprocessing_data_treatmet(self, clasification_type):
+        if clasification_type[0] == 'HOG':
+            self.apply_hog()
+        elif clasification_type[0] == 'GRAY':
+            self.apply_gray_vectorization()
+        elif clasification_type[0] == 'RGB':
+            self.apply_rgb_vectorization()
+        elif clasification_type[0] == 'CANY':
+            self.apply_cany()
 
     def apply_cany(self):
         '''
@@ -281,6 +300,23 @@ class Warehouse:
             labels = np.append(labels, aux)
             labels = labels.astype(np.float32)
             self.clasificadores_binarios[key] = lda.fit(signal_data, labels)
+
+    def apply_pca_knn(self):
+        '''
+        Aplica la transformacion de LDA las imagenes y genera el clasificador bayesiano para cada una de las señales
+        '''
+        print('Aplicando reduccion de dimensionalidad a las imagenes de entrenamiento con el algoritmo PCA y generando Clasificadores binarios ...')
+        total_data = []
+        total_labels = np.array([])
+        for key in tqdm(self.train_images.keys()):
+            signal_data = self.train_images[key]
+            for element in signal_data:
+                total_data.append(element)
+            labels = np.ones(len(signal_data))
+            labels = labels*[key.value]
+            total_labels = np.append(total_labels, labels)
+        total_data_reduced = self.pca.fit_transform(total_data, total_labels)
+        self.knn.fit(total_data_reduced, total_labels)
 
     def save_validation_set(self):
         '''
